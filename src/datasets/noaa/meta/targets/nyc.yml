@@ -1,0 +1,10 @@
+
+ids: ["JFK", "LGA", "NYC"]
+id_type: "IATA"
+state: "NY"
+name_patterns:
+  - "KENNEDY"
+  - "LAGUARDIA"
+  - "CENTRAL PARK"
+  - "NYC"
+
