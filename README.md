@@ -1,53 +1,152 @@
 # OpenMesh Dataset & Repository
-Status: 🚧 Under active development
 
-This project offers **(i)** a lightweight code sample for exploring the OpenMesh *wireless‑link signal‑level* dataset and **(ii)** direct links to the **full dataset** hosted on Zenodo.
+**Status:** 🚧 Under active development | 📄 [ESSD Paper](https://essd.copernicus.org/preprints/essd-2025-238/)
 
----
-## 1  Dataset on Zenodo
-Full‑resolution data (hundreds of MB) are available at:
-<https://zenodo.org/records/15268341>
-
-### Files included in the Zenodo archive
-- **`links_rawdata.csv`** – wide‑format received‑signal‑level (RSL) time‑series; each column is a `sublink_id`, each row a UTC timestamp (values in dBm).
-- **`links_metadata.csv`** – per‑link metadata: coordinates, link length (m), carrier frequency (MHz), and polarisation.
-- **`OpenMesh.nc`** – NetCDF bundle compliant with the OpenSense wireless‑link spec v1.1.  
-  • Dimensions `time`, `sublink_id`  
-  • Coordinates (all metadata + `time_utc`)  
-  • Data var `rsl` (float32, dBm)
+This repository provides:
+1. **Dataset access** – Full OpenMesh wireless-link dataset on Zenodo
+2. **Download & read tools** – Automated notebook to fetch and explore the dataset
+3. **Data fetching tools** – Scripts to retrieve supporting weather observations
+4. **Example code** – Notebooks and scripts for analysis
 
 ---
-## 2  Repository structure (this Git repo)
-A trimmed sample and helper code are provided so you can experiment without downloading the full archive.
 
+## 1. Dataset on Zenodo
+
+**Full dataset:** https://zenodo.org/records/15287692  
+**File:** `OpenMesh.zip` (≈330 MB)
+
+### Files in Zenodo archive:
+
+**Commercial Microwave Links (CML):**
+- `ds_openmesh.nc` – OpenSense v1.0 compliant NetCDF with RSL time-series
+- `links_metadata.csv` – Link coordinates, frequency, polarization
+- `openmesh_dataset_example.ipynb` – Example notebook for exploring CML data
+
+**Personal Weather Stations (PWS):**
+- `pws_opensense_sample_jan.nc` – OpenSense v1.0 compliant NetCDF sample (January)
+- `pws_metadata.csv` – Station locations and metadata
+- `read_pws_sample.ipynb` – Example notebook for PWS data
+- `ASOS_stations.csv` – NOAA ASOS station metadata
+
+**Maps & Documentation:**
+- `directional_map.html` – Interactive map of link directions
+- `frequency_map.html` – Interactive map colored by frequency bands
+- `README.txt` – Dataset documentation and variable descriptions
+
+---
+
+## 2. Repository Structure
 ```
 OpenMesh/
-├─ dataset/
-│  └─ sample_OpenMesh.nc        #  ≈5 MB excerpt of the full NetCDF
-├─ examples/
-│  └─ read_OpenMesh_nc.py       #  Demo: load NetCDF, plot, map, etc.
-├─ requirements.txt             #  xarray, netCDF4, matplotlib, numpy
-└─ README.md                    #  you are here
+├── dataset/                    # Sample data & examples
+│   ├── links/                  
+│   │   ├── links_metadata.csv
+│   │   └── openmesh_dataset_example.ipynb
+│   ├── weather stations/       
+│   │   ├── ASOS_stations.csv
+│   │   ├── pws_metadata.csv
+│   │   └── read_pws_sample.ipynb
+│   ├── maps/                   
+│   │   ├── directional_map.html
+│   │   └── frequency_map.html
+│   └── README.txt
+│
+├── src/                        # Data tools & processing
+│   ├── datasets/
+│   │   ├── download_and_read_openmesh.ipynb  # 📥 Download from Zenodo
+│   │   ├── noaa/               # NOAA ASOS weather data
+│   │   │   ├── asos_automated/ # Automated NCEI fetcher
+│   │   │   └── asos_iem/       # IEM manual download processor
+│   │   └── wu/                 # Weather Underground API fetcher
+│   └── README.md
+│
+├── analysis/                   # 🚧 Under development
+│   └── (Future analysis scripts)
+│
+└── requirements.txt            # Core dependencies
 ```
 
+**Note:** Large NetCDF files are not in this repo. Download from Zenodo using the notebook.
+
 ---
-## Quick Start
+
+## 3. Quick Start
+
+### Option A: Download via Notebook (Recommended)
 ```bash
-# 1 Create / activate an environment
-conda create -n openmesh python=3.11   # or: python -m venv .venv
-conda activate openmesh                # or: source .venv/bin/activate
+# 1. Install dependencies
+pip install -r requirements.txt
 
-# 2 Install dependencies
-pip install -r requirements.txt        # xarray, netCDF4, matplotlib, numpy
+# 2. Run the download notebook
+jupyter notebook src/datasets/download_and_read_openmesh.ipynb
 
-# 3 Run the demo script
-python examples/read_OpenMesh_nc.py
+# This will:
+# - Download OpenMesh.zip from Zenodo
+# - Extract all files
+# - Load and visualize the data
 ```
-git add -A          # adds updates, new files, and deletions
+
+### Option B: Manual Download
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+
+# 2. Download manually from Zenodo
+# Visit: https://zenodo.org/records/15287692
+# Download: OpenMesh.zip
+
+# 3. Extract and explore
+unzip OpenMesh.zip
+jupyter notebook dataset/links/openmesh_dataset_example.ipynb
+```
+
+### Fetch Additional Weather Data
+```bash
+# NOAA ASOS data (automated)
+cd src/datasets/noaa/asos_automated
+python main.py --start-date 2024-01-01 --end-date 2024-12-31
+
+# Weather Underground data
+cd src/datasets/wu/fetch_data
+python main.py  # Configure API key first
+```
+
+See [src/README.md](src/README.md) for detailed data fetching instructions.
 
 ---
-## Citation & Licence
-- **Licence** – CC BY 4.0  
-- **Zenodo DOI** – <https://doi.org/10.5281/zenodo.15268341>  
-- **Repository** – <https://github.com/drorjac/OpenMesh>
 
+## 4. Citation & License
+
+### Dataset Citation
+```
+Jacobson, D. et al. (2025). OpenMesh: Opportunistic Weather Sensing Using 
+NYC Community Mesh Network Data [Data set]. Zenodo. 
+https://doi.org/10.5281/zenodo.15287692
+```
+
+### Paper Citation
+```
+Jacobson, D. et al. (2025). OpenMesh: Opportunistic Weather Sensing Using 
+NYC Community Mesh Network Data. Earth System Science Data Discussions. 
+https://doi.org/10.5194/essd-2025-238
+```
+
+**License:** CC BY 4.0
+
+---
+
+## 5. Data Sources
+
+- **CML Data:** NYC Community Mesh Network
+- **PWS Data:** Weather Underground Personal Weather Stations  
+- **ASOS Data:** NOAA Automated Surface Observing System (JFK, LaGuardia, Central Park)
+
+---
+
+## 6. Contact & Contributing
+
+- **Issues:** https://github.com/drorjac/OpenMesh/issues
+- **ESSD Discussion:** https://essd.copernicus.org/preprints/essd-2025-238/#discussion
+- **Affiliations:** Tel Aviv University, Columbia University
+
+For questions about data fetching or processing, see module-specific READMEs in `src/datasets/`.
