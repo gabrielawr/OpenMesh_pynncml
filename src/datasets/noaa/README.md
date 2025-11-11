@@ -1,45 +1,98 @@
-# NOAA ASOS Data Module
+# NOAA ASOS Weather Data
 
-## 1. Overview
+Two complementary methods for accessing NOAA Automated Surface Observing System (ASOS) data for NYC area stations (JFK, LaGuardia, Central Park).
 
-This module is responsible for fetching, processing, and managing weather data from the **NOAA Automated Surface Observing System (ASOS)** network.
+## Methods Overview
 
-The primary focus is on downloading high-frequency **5-minute interval data** for a specific set of weather stations located in the **New York City area**, particularly covering Manhattan and the areas surrounding Brooklyn. The module is designed to retrieve data for a user-defined time period.
+### Method 1: IEM Manual Download (`asos_iem/`)
+**Best for:** Quick analysis, exploratory work, specific time periods
 
-## 2. Data Source
+**Advantages:**
+- ✅ User-friendly web interface
+- ✅ Pre-processed, clean CSV format
+- ✅ 1-minute OR 5-minute resolution
+- ✅ Flexible variable selection
+- ✅ Often more complete data coverage
 
-* **Dataset Name**: Automated Surface Observing System (ASOS) 5-Minute Data
-* **Hosting Agency**: NOAA National Centers for Environmental Information (NCEI)
-* **Source URL**: [https://www.ncei.noaa.gov/data/automated-surface-observing-system-five-minute/](https://www.ncei.noaa.gov/data/automated-surface-observing-system-five-minute/)
+**Process:**
+1. Visit https://mesonet.agron.iastate.edu/request/asos/1min.phtml
+2. Select stations and date range
+3. Download CSV files
+4. Process with provided scripts
 
-## 3. Geographic Focus & Target Stations
+[→ See asos_iem/QUICKSTART.md for details](asos_iem/QUICKSTART.md)
 
-This module is configured to target stations providing coverage for Manhattan and Brooklyn. The primary stations are:
+---
 
-| Station ID | Name / Location                       | Borough Coverage |
-| :--------- | :------------------------------------ | :--------------- |
-| `KNYC`     | Central Park                          | Manhattan        |
-| `KJFK`     | John F. Kennedy International Airport | Queens (serves Brooklyn) |
-| `KLGA`     | LaGuardia Airport                     | Queens (serves Brooklyn) |
+### Method 2: Automated NOAA Download (`asos_automated/`)
+**Best for:** Batch processing, automation, reproducible pipelines
 
-**Note**: While there are no major ASOS stations of this type located directly within Brooklyn, the stations at JFK and LGA in Queens provide the most relevant and comprehensive coverage for the borough.
+**Advantages:**
+- ✅ Fully programmatic (no manual steps)
+- ✅ Direct from official NOAA NCEI source
+- ✅ Complete pipeline: fetch → process → validate → analyze
+- ✅ Good for large date ranges
+- ✅ Reproducible research workflows
 
-## 4. Module Components
+**Process:**
+1. Configure stations and dates in config.py
+2. Run: `python main.py`
+3. Automated download, processing, validation
 
-* `fetcher.py`: Handles the connection to the NCEI data server and downloads the raw, fixed-width `.dat` files for the specified stations and date ranges.
-* `processor.py`: Reads the raw `.dat` files, parses the fixed-width format, cleans the data, and outputs it into a structured format (e.g., CSV or Parquet).
-* `config.py`: Contains key configuration variables such as the list of target station IDs, start and end dates for data fetching, and file paths.
-* `validator.py`: (Optional) Performs data quality checks on the processed data to ensure completeness and accuracy.
+[→ See asos_automated/README.md for details](asos_automated/README.md)
 
-## 5. Usage
+---
 
-The scripts within this module are designed to be called by a master pipeline script. The typical workflow is:
+## Which Method Should I Use?
 
-1.  Configure the desired stations and date range in `config.py`.
-2.  The orchestration script will first run the `fetcher.py` to download the raw data.
-3.  Following a successful download, the `processor.py` is run to convert the raw data into a clean, analyzable format.
+| Use Case | Recommended Method |
+|----------|-------------------|
+| Quick exploratory analysis | IEM Manual |
+| One-time data pull for specific dates | IEM Manual |
+| Automated data pipeline | NOAA Automated |
+| Large date ranges (> 6 months) | NOAA Automated |
+| Reproducible research | NOAA Automated |
+| Publication dataset | Both (validate consistency) |
 
-## 6. Data Format
+## Stations Covered
 
-* **Raw Format**: Fixed-width text (`.dat`) files, with a structure defined by NOAA.
-* **Processed Format**: Comma-Separated Values (`.csv`) files, with clearly defined columns for timestamp, temperature, precipitation, etc.
+Both methods support:
+- **KJFK** - John F. Kennedy International Airport
+- **KLGA** - LaGuardia Airport  
+- **KNYC** - Central Park
+
+## Data Variables
+
+Common variables available in both:
+- Temperature & Dew Point
+- Wind Speed & Direction
+- Atmospheric Pressure
+- Visibility
+- Precipitation
+
+## Quick Start
+
+### IEM Method:
+```bash
+cd asos_iem
+python examples.py
+```
+
+### Automated Method:
+```bash
+cd asos_automated
+python main.py --start-date 2024-01-01 --end-date 2024-12-31
+```
+
+## Citation
+
+When using ASOS data, cite:
+```
+NOAA National Weather Service, U.S. Federal Aviation Administration, 
+U.S. Department of Defense (2005): Automated Surface Observing System (ASOS) Data. 
+NOAA National Centers for Environmental Information. [access date]
+```
+
+---
+
+**Need help?** Check the README in each subdirectory for detailed documentation.
