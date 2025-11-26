@@ -85,11 +85,25 @@ source venv/bin/activate
 # venv\Scripts\activate
 ```
 
+### Clone PyNNcml Repository
+
+**Important:** PyNNcml is a separate repository. Each collaborator needs to clone it:
+
+```bash
+# Clone PyNNcml into the project root
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+```
+
+**Note:** See [src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md](src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md) for complete setup instructions.
+
 ### Install Dependencies
 
 ```bash
 # Install all dependencies (includes PyNNcml dependencies)
 pip install -r requirements.txt
+
+# Install PyNNcml dependencies
+pip install -r PyNNcml/requirements.txt
 
 # Install PyNNcml in editable mode (for development)
 cd PyNNcml
