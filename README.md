@@ -63,7 +63,8 @@ OpenMesh/
 ├── analysis/                   # 🚧 Under development
 │   └── (Future analysis scripts)
 │
-└── requirements.txt            # Core dependencies
+├── requirements.txt            # Core dependencies
+└── environment.yml             # Conda environment specification (optional)
 ```
 
 **Note:** Large NetCDF files are not in this repo. Download from Zenodo using the notebook.
@@ -72,7 +73,25 @@ OpenMesh/
 
 ## 3. Environment Setup
 
-### Create Virtual Environment (Recommended)
+Follow these steps in order to set up your development environment:
+
+### Step 1: Create Virtual Environment
+
+You can use either **conda** (recommended) or **venv**.
+
+#### Option A: Using Conda (Recommended)
+
+```bash
+# Option A1: Create from environment.yml (if available)
+conda env create -f environment.yml
+conda activate openmesh
+
+# Option A2: Create manually
+conda create -n openmesh python=3.11
+conda activate openmesh
+```
+
+#### Option B: Using venv
 
 ```bash
 # Create virtual environment
@@ -85,44 +104,104 @@ source venv/bin/activate
 # venv\Scripts\activate
 ```
 
-### Clone PyNNcml Repository
+### Step 2: Clone PyNNcml Repository
 
-**Important:** PyNNcml is a separate repository. Each collaborator needs to clone it:
+**⚠️ Important:** PyNNcml is a **separate repository** and **must be cloned before installation**. Each collaborator needs to clone it:
 
 ```bash
+# Navigate to project root (if not already there)
+cd /path/to/OpenMesh_pynncml
+
 # Clone PyNNcml into the project root
 git clone git@github.com:drorjac/PyNNcml.git PyNNcml
 ```
 
-**Note:** See [src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md](src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md) for complete setup instructions.
-
-### Install Dependencies
-
+**Note:** If you don't have SSH access, you can use HTTPS instead:
 ```bash
-# Install all dependencies (includes PyNNcml dependencies)
+git clone https://github.com/drorjac/PyNNcml.git PyNNcml
+```
+
+**Troubleshooting:** If the `PyNNcml` directory already exists but is empty, remove it first:
+```bash
+rm -rf PyNNcml
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+```
+
+### Step 3: Install Dependencies
+
+**If using conda and environment.yml:**
+- Dependencies from `environment.yml` are already installed when you created the environment
+- Only need to install PyNNcml in editable mode (see below)
+
+**If using venv or manual conda setup:**
+```bash
+# Install OpenMesh project dependencies
 pip install -r requirements.txt
+```
 
-# Install PyNNcml dependencies
-pip install -r PyNNcml/requirements.txt
-
-# Install PyNNcml in editable mode (for development)
+**Then install PyNNcml (required for both methods):**
+```bash
+# Install PyNNcml in editable mode (this will also install its dependencies)
 cd PyNNcml
 pip install -e .
 cd ..
 ```
 
-### Verify Installation
+**Note:** Installing PyNNcml in editable mode (`pip install -e .`) will automatically handle its dependencies, so you don't need to run `pip install -r PyNNcml/requirements.txt` separately.
+
+### Step 4: Verify Installation
 
 ```bash
-# Test imports
+# Test that all imports work
 python -c "import numpy, pandas, xarray, matplotlib; import pynncml; print('✓ All imports successful')"
 ```
+
+**Expected output:** `✓ All imports successful`
 
 **Note:** The `requirements.txt` includes all dependencies needed for:
 - Data processing (numpy, pandas, xarray)
 - Visualization (matplotlib)
 - PyNNcml (torch, torchvision, and other ML dependencies)
 - Jupyter notebooks
+
+### Quick Reference: Complete Setup Commands
+
+**Option A: Using Conda (Recommended)**
+
+```bash
+# 1. Create conda environment from environment.yml
+conda env create -f environment.yml
+conda activate openmesh
+
+# 2. Clone PyNNcml (REQUIRED before installation)
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+
+# 3. Install PyNNcml in editable mode
+cd PyNNcml && pip install -e . && cd ..
+
+# 4. Verify installation
+python -c "import numpy, pandas, xarray, matplotlib; import pynncml; print('✓ All imports successful')"
+```
+
+**Option B: Using venv**
+
+```bash
+# 1. Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 2. Clone PyNNcml (REQUIRED before installation)
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+
+# 3. Install dependencies
+pip install -r requirements.txt
+cd PyNNcml && pip install -e . && cd ..
+
+# 4. Verify installation
+python -c "import numpy, pandas, xarray, matplotlib; import pynncml; print('✓ All imports successful')"
+```
+
+**See also:** [src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md](src/analysis/pynncml_experiments/DEVELOPMENT_SETUP.md) for additional development setup instructions.
 
 ---
 

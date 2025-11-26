@@ -25,11 +25,11 @@ Both repositories work together:
 
 ```bash
 # Clone the OpenMesh repository
-git clone <openmesh-repo-url> OpenMesh-fresh
-cd OpenMesh-fresh
+git clone git@github.com:gabrielawr/OpenMesh_pynncml.git OpenMesh
+cd OpenMesh
 ```
 
-**Note:** Replace `<openmesh-repo-url>` with your actual OpenMesh repository URL.
+**Note:** You can name the directory whatever you like (e.g., `OpenMesh`, `openmesh-project`, etc.). The repository URL may vary depending on your fork.
 
 ### Step 2: Clone PyNNcml Repository
 
@@ -43,10 +43,29 @@ git clone git@github.com:drorjac/PyNNcml.git PyNNcml
 - This is a **separate repository** - each collaborator needs to clone it
 - PyNNcml is **not** a git submodule (it's an independent repo)
 
+**Alternative URLs (if you have your own fork):**
+- SSH: `git@github.com:your-username/PyNNcml.git`
+- HTTPS: `https://github.com/your-username/PyNNcml.git`
+- Upstream: `https://github.com/haihabi/PyNNcml.git`
+
 ### Step 3: Set Up Python Environment
 
+You can use either **conda** (recommended) or **venv**. 
+
+#### Option A: Using Conda (Recommended)
+
 ```bash
-# Create virtual environment (recommended)
+# Create conda environment
+conda create -n openmesh python=3.11
+conda activate openmesh
+```
+
+**Note:** If you're recreating from an existing environment, see the [Environment Sharing](#-sharing-environment-with-collaborators) section below for using `environment.yml`.
+
+#### Option B: Using venv
+
+```bash
+# Create virtual environment
 python3 -m venv venv
 
 # Activate virtual environment
@@ -61,18 +80,23 @@ source venv/bin/activate
 ```bash
 # Install OpenMesh project dependencies
 pip install -r requirements.txt
-
-# Install PyNNcml dependencies
-pip install -r PyNNcml/requirements.txt
 ```
 
 ### Step 5: Install PyNNcml in Editable Mode
 
 ```bash
 # Install PyNNcml in editable mode
+# This will also automatically install all PyNNcml dependencies
 cd PyNNcml
 pip install -e .
 cd ..
+```
+
+**Note:** Installing PyNNcml with `pip install -e .` automatically handles its dependencies from `setup.py` or `requirements.txt`, so you don't need to run `pip install -r PyNNcml/requirements.txt` separately. If you encounter dependency issues, you can install them explicitly:
+
+```bash
+# Only if needed - usually not required
+pip install -r PyNNcml/requirements.txt
 ```
 
 **What is editable mode?**
@@ -105,7 +129,7 @@ jupyter notebook src/analysis/pynncml_experiments/test/test_pynncml_setup.ipynb
 ### Directory Structure
 
 ```
-OpenMesh-fresh/
+OpenMesh/                       # Your project directory (name can vary)
 ├── PyNNcml/                    # Separate git repository
 │   ├── .git/                   # PyNNcml's git
 │   ├── pynncml/                # PyNNcml source code
@@ -156,21 +180,23 @@ OpenMesh-fresh/
 
 ### Working Together
 
-**For your partner/collaborator:**
+**For collaborators:**
 
-1. They need to clone **both** repositories:
+1. Clone **both** repositories:
    ```bash
-   # Clone OpenMesh
-   git clone <openmesh-repo-url> OpenMesh-fresh
-   cd OpenMesh-fresh
+   # Clone OpenMesh repository
+   git clone git@github.com:gabrielawr/OpenMesh_pynncml.git OpenMesh
+   cd OpenMesh
    
-   # Clone PyNNcml
+   # IMPORTANT: Clone PyNNcml BEFORE installing dependencies
    git clone git@github.com:drorjac/PyNNcml.git PyNNcml
    ```
 
-2. Then follow steps 3-6 above (environment setup)
+2. Then follow steps 3-5 above (create virtual environment, install dependencies, install PyNNcml in editable mode)
 
-3. When you push changes to either repo, they can pull:
+3. Verify the installation (Step 6 above)
+
+4. When updates are pushed to either repo, pull changes:
    ```bash
    # Pull OpenMesh changes
    git pull
@@ -297,10 +323,11 @@ jupyter notebook src/analysis/pynncml_experiments/test/test_pynncml_setup.ipynb
 ## 📝 Current Status
 
 - **PyNNcml location:** `PyNNcml/` (project root)
-- **PyNNcml repository:** `git@github.com:drorjac/PyNNcml.git`
 - **Upstream repository:** `https://github.com/haihabi/PyNNcml.git`
 - **Installation:** Editable mode (`pip install -e .`)
 - **Git status:** Separate repositories (not submodules)
+
+**Note:** Each collaborator may use their own PyNNcml fork or the upstream repository.
 
 ---
 
@@ -336,8 +363,18 @@ cd ..
 
 **Solution:**
 ```bash
-# Install all dependencies
+# Install OpenMesh dependencies
 pip install -r requirements.txt
+
+# Reinstall PyNNcml in editable mode (this handles its dependencies)
+cd PyNNcml
+pip install -e .
+cd ..
+```
+
+If dependencies are still missing after installing PyNNcml, you can install them explicitly:
+```bash
+# Install PyNNcml dependencies manually (usually not needed)
 pip install -r PyNNcml/requirements.txt
 ```
 
@@ -361,4 +398,116 @@ pip install -r PyNNcml/requirements.txt
 
 ---
 
-**Last updated:** 2025-01-26
+## 🔄 Sharing Environment with Collaborators
+
+### What Can Be Shared (in Git)
+
+✅ **Environment Configuration Files** - These should be committed to git:
+- `requirements.txt` - List of pip packages (already in repo)
+- `environment.yml` - Conda environment specification (optional but recommended)
+
+❌ **What Should NOT Be Shared:**
+- `venv/` or `env/` directories - These are personal environments (too large, OS-specific)
+- `PyNNcml/` directory - Separate repository, each person clones their own copy
+- `.env` files - May contain secrets
+- Python cache files (`__pycache__/`, `*.pyc`)
+
+### Creating Environment Configuration Files
+
+#### Option 1: Export Conda Environment (Recommended for Conda Users)
+
+If you're using conda, export your environment:
+
+```bash
+# From your activated conda environment (e.g., openmesh)
+conda env export -n openmesh > environment.yml
+
+# Or export without build strings (more portable across platforms)
+conda env export -n openmesh --no-builds > environment.yml
+
+# Or export only explicitly installed packages (cleaner, recommended)
+conda env export -n openmesh --from-history > environment.yml
+```
+
+Then commit the `environment.yml` file to git:
+```bash
+git add environment.yml
+git commit -m "Add environment.yml for conda environment sharing"
+git push
+```
+
+#### Option 2: Use requirements.txt (Simpler, Works for Everyone)
+
+The `requirements.txt` file is already in the repository and works for both conda and venv users. No additional export needed!
+
+### Collaborator Setup from Environment Files
+
+#### Using environment.yml (Conda Users)
+
+Your collaborator can recreate your exact environment:
+
+```bash
+# Clone OpenMesh repository
+git clone git@github.com:gabrielawr/OpenMesh_pynncml.git OpenMesh
+cd OpenMesh
+
+# Create environment from environment.yml
+conda env create -f environment.yml -n openmesh
+conda activate openmesh
+
+# Clone PyNNcml (REQUIRED - separate repository)
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+
+# Install PyNNcml in editable mode
+cd PyNNcml && pip install -e . && cd ..
+```
+
+#### Using requirements.txt (All Users)
+
+Works with both conda and venv:
+
+```bash
+# Clone OpenMesh repository
+git clone git@github.com:gabrielawr/OpenMesh_pynncml.git OpenMesh
+cd OpenMesh
+
+# Option A: Using conda
+conda create -n openmesh python=3.11
+conda activate openmesh
+pip install -r requirements.txt
+
+# Option B: Using venv
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# Clone PyNNcml (REQUIRED - separate repository)
+git clone git@github.com:drorjac/PyNNcml.git PyNNcml
+
+# Install PyNNcml in editable mode
+cd PyNNcml && pip install -e . && cd ..
+```
+
+### Important Notes
+
+1. **PyNNcml must be cloned separately** - It's a separate git repository, not included in environment files
+2. **Each person creates their own environment** - The files define what to install, but each person installs locally
+3. **Environment files are portable** - `requirements.txt` works across platforms, `environment.yml` may need minor adjustments for different OS
+4. **Project directory name is flexible** - Use any name you prefer for the OpenMesh directory
+
+### Recommended Workflow
+
+1. **Maintainer (You):**
+   - Keep `requirements.txt` up to date (already in repo)
+   - Optionally create and maintain `environment.yml` for conda users
+   - Commit both to git
+
+2. **Collaborator:**
+   - Clone OpenMesh repo (gets `requirements.txt` and optionally `environment.yml`)
+   - Clone PyNNcml separately
+   - Create their own environment using one of the files
+   - Install PyNNcml in editable mode
+
+---
+
+**Last updated:** 2025-11-26

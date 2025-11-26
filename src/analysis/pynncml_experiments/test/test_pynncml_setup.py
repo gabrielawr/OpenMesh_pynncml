@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+# NOTE: This script requires the 'openmesh' conda environment
+# Run with: conda activate openmesh && python test_pynncml_setup.py
+# Or: /Users/drorjac/miniforge3/envs/openmesh/bin/python test_pynncml_setup.py
 """
 Comprehensive test suite for PyNNcml setup and editable install verification.
 
@@ -16,6 +19,42 @@ editable install is working correctly.
 import sys
 import os
 from pathlib import Path
+
+# Check if we're using the correct Python environment
+def check_python_environment():
+    """Warn if not using the conda environment."""
+    python_exe = sys.executable
+    expected_env_path = '/Users/drorjac/miniforge3/envs/openmesh'
+    
+    if expected_env_path not in python_exe:
+        print("=" * 70)
+        print("⚠️  WARNING: Wrong Python Environment Detected!")
+        print("=" * 70)
+        print(f"Current Python: {python_exe}")
+        print(f"Expected: {expected_env_path}/bin/python")
+        print("\nThis script requires the 'openmesh' conda environment.")
+        print("\nTo fix:")
+        print("  1. Activate conda environment: conda activate openmesh")
+        print("  2. Or configure your IDE to use the conda Python interpreter")
+        print("  3. Or run: /Users/drorjac/miniforge3/envs/openmesh/bin/python test_pynncml_setup.py")
+        print("\n" + "=" * 70)
+        print()
+    
+    # Quick dependency check
+    try:
+        import numpy
+    except ImportError:
+        print("=" * 70)
+        print("❌ ERROR: Required dependencies are missing!")
+        print("=" * 70)
+        print("The 'numpy' module is not available in the current Python environment.")
+        print(f"Python used: {python_exe}")
+        print("\nPlease use the 'openmesh' conda environment which has all dependencies installed.")
+        print("=" * 70)
+        sys.exit(1)
+
+# Run environment check before proceeding
+check_python_environment()
 
 
 def get_project_root():
