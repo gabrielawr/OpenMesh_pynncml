@@ -378,6 +378,44 @@ If dependencies are still missing after installing PyNNcml, you can install them
 pip install -r PyNNcml/requirements.txt
 ```
 
+### Windows Encoding Error (PyNNcml Installation)
+
+**Error:** `UnicodeDecodeError: 'charmap' codec can't decode byte 0x9d`
+
+**Problem:** On Windows, PyNNcml's `setup.py` fails when reading the README file due to encoding issues. Windows uses cp1252 encoding by default, which cannot decode certain UTF-8 characters.
+
+**Solution:**
+
+**✅ This has been fixed!** The fix is now in the PyNNcml repository.
+
+**If you get this error:**
+
+1. **Update PyNNcml to the latest version:**
+   ```bash
+   cd PyNNcml
+   git pull origin main
+   ```
+
+2. **Then try installing again:**
+   ```bash
+   pip install -e .
+   ```
+
+**If you already have the latest version and still get the error**, or if you can't pull updates, manually fix `setup.py`:
+
+1. Edit `PyNNcml/setup.py` file
+2. Change line 11 to add `encoding="utf-8"`:
+   ```python
+   with open("README.md", "r", encoding="utf-8") as fh:
+   ```
+3. Change line 6 to add `encoding="utf-8"`:
+   ```python
+   return [r.split('\n')[0] for r in open('requirements.txt', 'r', encoding="utf-8").readlines()]
+   ```
+4. Save the file and run `pip install -e .` again
+
+**Note:** The fix has been committed to the PyNNcml repository and works on Windows, macOS, and Linux.
+
 ---
 
 ## 📚 Related Documentation
