@@ -36,3 +36,6 @@ __pycache__/
 *.nc
 !**/dataset/**/*.csv
 !**/dataset/**/*.nc
+
+# Exclude downloaded data files (keep dataset/ folder at root for metadata only)
+src/data/
