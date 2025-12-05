@@ -1,0 +1,41 @@
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PyNNcml (separate repository - each person clones their own)
+PyNNcml/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment variables
+.env
+*.key
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Data outputs (if any)
+*.csv
+*.nc
+!**/dataset/**/*.csv
+!**/dataset/**/*.nc
+
+# Exclude downloaded data files (keep dataset/ folder at root for metadata only)
+src/data/
