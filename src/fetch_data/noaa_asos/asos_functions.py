@@ -2,7 +2,21 @@
 NOAA ASOS Data Processing Functions
 ====================================
 
-Core functions for fetching and processing ASOS weather data from IEM API.
+Fetch and process Automated Surface Observing System (ASOS) data from 
+Iowa Environmental Mesonet (IEM) API.
+
+ASOS Precipitation Measurement (from IEM/NOAA):
+------------------------------------------------
+- p01i = "One hour precipitation from observation time to previous hourly reset"
+- Reset occurs at ~51 minutes past each hour (site-dependent)
+- In 5-min data, p01i is a RUNNING TOTAL that repeats until next reset
+- To get true hourly precip: use ONLY the :51 minute observations
+- Values reported in INCHES (converted to mm here)
+
+References:
+-----------
+- IEM: https://mesonet.agron.iastate.edu/request/download.phtml
+- ASOS User's Guide: https://www.weather.gov/asos/
 
 Author: OpenMesh Project
 Date: 2025-11-16
@@ -202,20 +216,163 @@ def process_all_stations(raw_data, verbose=True):
 # PRECIPITATION ANALYSIS
 # ============================================================================
 
-def compute_accumulated_rainfall(df):
-    """Compute cumulative precipitation"""
+def compute_precip_increments(processed_data):
+    """
+    Compute TRUE 5-minute precipitation increments.
+    
+    ASOS p01i is a running hourly total that resets at ~:51.
+    To get actual rainfall per 5-min interval:
+    - Compute diff between consecutive observations
+    - When diff < 0, it means hourly reset occurred → use the new value as-is
+    
+    Parameters
+    ----------
+    processed_data : dict
+        Dictionary of processed DataFrames {station_id: df}
+        
+    Returns
+    -------
+    dict
+        Same structure with 'precip_mm' replaced by true 5-min increments
+    """
+    result = {}
+    
+    for station_id, df in processed_data.items():
+        df_out = df.copy()
+        df_out['datetime'] = pd.to_datetime(df_out['datetime'])
+        df_out = df_out.sort_values('datetime').reset_index(drop=True)
+        
+        if 'precip_mm' in df_out.columns:
+            # Compute difference between consecutive readings
+            precip_raw = df_out['precip_mm'].fillna(0)
+            precip_diff = precip_raw.diff()
+            
+            # First row: use raw value
+            precip_diff.iloc[0] = precip_raw.iloc[0]
+            
+            # Negative diff = hourly reset occurred → use raw value (new hour's accumulation)
+            reset_mask = precip_diff < 0
+            precip_diff[reset_mask] = precip_raw[reset_mask]
+            
+            df_out['precip_mm'] = precip_diff
+        
+        result[station_id] = df_out
+    
+    return result
+
+
+def compute_accumulated_rainfall(df, start_date=None, end_date=None):
+    """
+    Compute cumulative precipitation from 5-min increment data.
+    
+    This version works with increment data (where precip_mm is per 5-minute interval).
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with datetime and precip_mm columns (increments, not running totals)
+    start_date : datetime, optional
+        Start date for filtering
+    end_date : datetime, optional
+        End date for filtering
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with datetime, precip_mm, and accumulated_mm columns
+    """
     df_accum = df[['datetime', 'precip_mm']].copy()
+    df_accum['datetime'] = pd.to_datetime(df_accum['datetime'])
+    
+    # Filter date range
+    if start_date:
+        df_accum = df_accum[df_accum['datetime'] >= pd.to_datetime(start_date)]
+    if end_date:
+        df_accum = df_accum[df_accum['datetime'] <= pd.to_datetime(end_date)]
+    
+    df_accum = df_accum.copy()
     df_accum['precip_mm'] = df_accum['precip_mm'].fillna(0)
     df_accum['accumulated_mm'] = df_accum['precip_mm'].cumsum()
-    return df_accum
+    
+    return df_accum.reset_index(drop=True)
 
 
-def compute_accumulated_for_all_stations(processed_data):
-    """Compute accumulated rainfall for all stations"""
+def compute_accumulated_rainfall_legacy(df, resolution='5min'):
+    """
+    Compute cumulative precipitation (legacy method using :51 minute observations).
+    
+    For 5-minute data: p01i represents "precipitation in the past hour" and is reported
+    at each 5-minute observation. The same hour's precipitation value repeats multiple times.
+    We use only the :51 minute observations (full hourly reports) to avoid double-counting.
+    
+    For hourly data: p01i is already per-hour precipitation, so we can sum directly.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with datetime and precip_mm columns (running totals from raw data)
+    resolution : str
+        '5min' or 'hourly'
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with datetime, precip_mm, and accumulated_mm columns
+    """
+    df_accum = df[['datetime', 'precip_mm']].copy()
+    df_accum['datetime'] = pd.to_datetime(df_accum['datetime'])
+    
+    if resolution == '5min':
+        # Use only :51 minute observations (full hourly reports)
+        # These represent the precipitation that fell in the complete hour ending at :51
+        df_accum['minute'] = df_accum['datetime'].dt.minute
+        df_hourly = df_accum[df_accum['minute'] == 51].copy()
+        df_hourly = df_hourly[['datetime', 'precip_mm']].copy()
+        df_hourly['precip_mm'] = df_hourly['precip_mm'].fillna(0)
+        
+        # Compute cumulative sum (values are per-hour, not cumulative)
+        df_hourly['accumulated_mm'] = df_hourly['precip_mm'].cumsum()
+        
+        return df_hourly[['datetime', 'precip_mm', 'accumulated_mm']]
+    else:
+        # For hourly data, p01i is already per-hour precipitation
+        df_accum = df_accum.set_index('datetime')
+        df_accum['precip_mm'] = df_accum['precip_mm'].fillna(0)
+        df_accum['accumulated_mm'] = df_accum['precip_mm'].cumsum()
+        return df_accum.reset_index()[['datetime', 'precip_mm', 'accumulated_mm']]
+
+
+def compute_accumulated_for_all_stations(processed_data, start_date=None, end_date=None, resolution=None):
+    """
+    Compute accumulated rainfall for all stations.
+    
+    Parameters
+    ----------
+    processed_data : dict
+        Dictionary of processed DataFrames {station_id: df}
+        If data has been processed with compute_precip_increments, use start_date/end_date
+        Otherwise, use resolution for legacy method
+    start_date : datetime, optional
+        Start date for filtering (used with increment data)
+    end_date : datetime, optional
+        End date for filtering (used with increment data)
+    resolution : str, optional
+        Resolution for legacy method ('5min' or 'hourly')
+        
+    Returns
+    -------
+    dict
+        Dictionary of accumulated rainfall DataFrames {station_id: df}
+    """
     accumulated_data = {}
     for station_id, df in processed_data.items():
         if 'precip_mm' in df.columns:
-            accumulated_data[station_id] = compute_accumulated_rainfall(df)
+            if resolution is not None:
+                # Legacy method: use :51 minute observations
+                accumulated_data[station_id] = compute_accumulated_rainfall_legacy(df, resolution=resolution)
+            else:
+                # New method: use increment data
+                accumulated_data[station_id] = compute_accumulated_rainfall(df, start_date, end_date)
     return accumulated_data
 
 
