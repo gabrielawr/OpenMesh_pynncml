@@ -1,25 +1,15 @@
 """
-NOAA ASOS Data Processing Functions
-====================================
+ASOS 1-Minute Data Functions
+============================
 
-Fetch and process Automated Surface Observing System (ASOS) data from 
-Iowa Environmental Mesonet (IEM) API.
+Fetch TRUE per-minute precipitation and weather data from IEM.
 
-ASOS Precipitation Measurement (from IEM/NOAA):
-------------------------------------------------
-- p01i = "One hour precipitation from observation time to previous hourly reset"
-- Reset occurs at ~51 minutes past each hour (site-dependent)
-- In 5-min data, p01i is a RUNNING TOTAL that repeats until next reset
-- To get true hourly precip: use ONLY the :51 minute observations
-- Values reported in INCHES (converted to mm here)
+Source: https://mesonet.agron.iastate.edu/request/asos/1min.phtml
 
-References:
------------
-- IEM: https://mesonet.agron.iastate.edu/request/download.phtml
-- ASOS User's Guide: https://www.weather.gov/asos/
+Key feature:
+- 1-min `precip` = TRUE precipitation per minute (not hourly running totals)
 
-Author: OpenMesh Project
-Date: 2025-11-16
+Note: Data is delayed 18-36 hours (not real-time) due to NCEI collection method.
 """
 
 import pandas as pd
@@ -27,377 +17,1159 @@ import numpy as np
 import requests
 from io import StringIO
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 from pathlib import Path
 
 
-# ============================================================================
-# STATION CONFIGURATION
-# ============================================================================
+# =============================================================================
+# STATION CONFIG
+# =============================================================================
 
 STATIONS = {
-    'KJFK': {
-        'name': 'JFK Airport',
-        'location': 'Queens, NY',
-        'color': '#1f77b4',
-        'linestyle': '-'
-    },
-    'KLGA': {
-        'name': 'LaGuardia Airport',
-        'location': 'Queens, NY',
-        'color': '#ff7f0e',
-        'linestyle': '--'
-    },
-    'KNYC': {
-        'name': 'Central Park',
-        'location': 'Manhattan, NY',
-        'color': '#2ca02c',
-        'linestyle': ':'
-    }
+    'JFK': {'name': 'JFK Airport', 'color': '#1f77b4', 'ls': '-'},
+    'LGA': {'name': 'LaGuardia Airport', 'color': '#ff7f0e', 'ls': '--'},
+    'NYC': {'name': 'Central Park', 'color': '#2ca02c', 'ls': ':'}
 }
 
 
-# ============================================================================
-# DATA FETCHING
-# ============================================================================
+# =============================================================================
+# FETCH 1-MINUTE DATA
+# =============================================================================
 
-def fetch_station_from_iem(station_id, start_date, end_date, resolution='5min', verbose=True):
+def fetch_1min_chunk(station_id, start_date, end_date, verbose=True):
     """
-    Fetch ASOS data from Iowa Environmental Mesonet (IEM) API
-    
-    Returns DataFrame with 33 columns including:
-    - tmpf, dwpf, relh (temperature, dewpoint, humidity)
-    - drct, sknt, gust (wind)
-    - p01i (precipitation)
-    - alti, mslp (pressure)
-    - vsby (visibility)
+    Fetch 1-minute ASOS data for a single time chunk.
     """
-    BASE_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+    url = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos1min.py"
     
     params = {
         'station': station_id,
-        'data': 'all',
+        'tz': 'UTC',
         'year1': start_date.year,
         'month1': start_date.month,
         'day1': start_date.day,
         'year2': end_date.year,
         'month2': end_date.month,
         'day2': end_date.day,
-        'tz': 'Etc/UTC',
-        'format': 'comma',
-        'latlon': 'yes',
-        'elev': 'yes',
-        'missing': 'M',
-        'trace': 'T',
+        'vars': 'tmpf,dwpf,sknt,drct,gust_sknt,gust_drct,ptype,precip',
+        'sample': '1min',
+        'what': 'download',
+        'delim': 'comma',
     }
     
-    if verbose:
-        res_str = '5-min' if resolution == '5min' else 'hourly'
-        print(f"Fetching {station_id} ({res_str})... ", end='', flush=True)
-    
     try:
-        response = requests.get(BASE_URL, params=params, timeout=120)
+        response = requests.get(url, params=params, timeout=300)
         
         if response.status_code == 200 and len(response.text) > 100:
-            df = pd.read_csv(StringIO(response.text), comment='#')
-            if verbose:
-                print(f"✓ {len(df):,} records, {len(df.columns)} columns")
+            df = pd.read_csv(StringIO(response.text))
             return df
         else:
-            if verbose:
-                print(f"✗ No data")
             return None
-            
     except Exception as e:
         if verbose:
-            print(f"✗ Error: {e}")
+            print(f"  ✗ Error: {e}")
         return None
 
 
-def fetch_all_stations(station_ids, start_date, end_date, resolution='5min', verbose=True):
-    """Fetch data for multiple stations"""
+def fetch_1min_station(station_id, start_date, end_date, verbose=True):
+    """
+    Fetch 1-minute data for a station in monthly chunks, then merge.
+    """
     if verbose:
-        print(f"\n{'='*60}")
-        print(f"FETCHING DATA ({resolution})")
-        print(f"{'='*60}\n")
+        print(f"\n{station_id} ({STATIONS.get(station_id, {}).get('name', '')}):")
+    
+    chunks = []
+    current = start_date.replace(day=1)
+    
+    while current < end_date:
+        # End of this month
+        next_month = current + relativedelta(months=1)
+        chunk_end = min(next_month - relativedelta(days=1), end_date)
+        
+        if verbose:
+            print(f"  {current.strftime('%Y-%m')}... ", end='', flush=True)
+        
+        df = fetch_1min_chunk(station_id, current, chunk_end, verbose=False)
+        
+        if df is not None and len(df) > 0:
+            chunks.append(df)
+            if verbose:
+                print(f"✓ {len(df):,} rows")
+        else:
+            if verbose:
+                print("✗ no data")
+        
+        current = next_month
+    
+    if len(chunks) == 0:
+        if verbose:
+            print(f"  ✗ No data retrieved for {station_id}")
+        return None
+    
+    # Merge all chunks
+    df_combined = pd.concat(chunks, ignore_index=True)
+    df_combined['valid'] = pd.to_datetime(df_combined['valid(UTC)'])
+    df_combined = df_combined.drop_duplicates(subset=['valid']).sort_values('valid')
+    df_combined = df_combined.reset_index(drop=True)
+    
+    if verbose:
+        print(f"  ✓ Total: {len(df_combined):,} rows")
+    
+    return df_combined
+
+
+def fetch_all_stations_1min(station_ids, start_date, end_date, verbose=True):
+    """
+    Fetch 1-minute data for all stations.
+    """
+    if verbose:
+        print("=" * 60)
+        print("FETCHING 1-MINUTE ASOS DATA")
+        print(f"Period: {start_date.date()} to {end_date.date()}")
+        print("=" * 60)
     
     raw_data = {}
     for station_id in station_ids:
-        df = fetch_station_from_iem(station_id, start_date, end_date, resolution, verbose)
-        if df is not None and len(df) > 0:
+        df = fetch_1min_station(station_id, start_date, end_date, verbose)
+        if df is not None:
             raw_data[station_id] = df
     
     if verbose:
-        print(f"\n✓ Fetched {len(raw_data)}/{len(station_ids)} stations\n")
+        print(f"\n✓ Fetched {len(raw_data)}/{len(station_ids)} stations")
     
     return raw_data
 
 
-# ============================================================================
-# DATA CONVERSION
-# ============================================================================
+def load_raw_data(data_dir, station_ids=None, verbose=True):
+    """
+    Load raw ASOS data from CSV files.
+    
+    Parameters
+    ----------
+    data_dir : str or Path
+        Directory containing raw CSV files
+    station_ids : list, optional
+        List of station IDs to load. If None, loads all found.
+    verbose : bool
+        Print progress
+    
+    Returns
+    -------
+    dict
+        {station_id: DataFrame}
+    """
+    data_dir = Path(data_dir)
+    
+    if verbose:
+        print(f"Loading raw data from: {data_dir}")
+    
+    raw_data = {}
+    files = sorted(data_dir.glob("*_raw_*.csv"))
+    
+    if not files:
+        print(f"  ⚠ No raw files found in {data_dir}")
+        return {}
+    
+    for fpath in files:
+        # Extract station_id from filename (e.g., "JFK_raw_20230801_20251110.csv" -> "JFK")
+        station_id = fpath.stem.split('_raw_')[0]
+        
+        if station_ids and station_id not in station_ids:
+            continue
+        
+        df = pd.read_csv(fpath)
+        raw_data[station_id] = df
+        
+        if verbose:
+            print(f"  ✓ {fpath.name} ({len(df):,} rows)")
+    
+    if verbose:
+        print(f"✓ Loaded {len(raw_data)} stations\n")
+    
+    return raw_data
 
-def convert_to_standard_format(df, station_id):
-    """Convert IEM format to metric units"""
-    df = df.copy()
-    standard = pd.DataFrame()
+# =============================================================================
+# PRECIP TYPE MAPPING
+# =============================================================================
+
+# Raw ptype codes mapping
+# Note: NCEI/IEM format is mostly undocumented. Codes inferred from METAR standards.
+# Source: https://mesonet.agron.iastate.edu/request/asos/1min.phtml
+PTYPE_MAP = {
+    # Dry - No precipitation
+    'NP': 'dry',
+    # Rain (any intensity: light-, moderate, heavy+)
+    'R': 'rain', 'R+': 'rain', 'R-': 'rain',
+    # Snow (any intensity: light-, moderate, heavy+)
+    'S': 'snow', 'S+': 'snow', 'S-': 'snow',
+    # Precipitation detected but type uncertain
+    'P': 'precip', 'P?': 'precip',
+    # Missing or sensor error
+    'M': 'missing', 'M ': 'missing',
+    '?0': 'missing', '?1': 'missing', '?2': 'missing', '?3': 'missing',
+}
+
+# Category descriptions for reference
+PRECIP_CATEGORIES = {
+    'dry': 'No precipitation (NP)',
+    'rain': 'Rain - any intensity (R, R+, R-)',
+    'snow': 'Snow - any intensity (S, S+, S-)',
+    'precip': 'Precipitation detected, type uncertain (P, P?)',
+    'missing': 'Missing data or sensor error (M, ?0-?3)',
+}
+
+
+def map_precip_category(ptype):
+    """
+    Map raw ptype code to simplified category.
     
-    standard['datetime'] = pd.to_datetime(df['valid'])
-    standard['station_id'] = station_id
+    Categories
+    ----------
+    - dry: No precipitation (NP)
+    - rain: Rain of any intensity (R, R+, R-)
+    - snow: Snow of any intensity (S, S+, S-)
+    - precip: Precipitation detected, type uncertain (P, P?)
+    - missing: Missing data or sensor error (M, ?0, ?1, ?2, ?3)
     
-    # Temperature: F to C
+    Note: NCEI/IEM 1-minute data format is mostly undocumented.
+    These mappings are inferred from standard METAR conventions.
+    
+    Returns
+    -------
+    str
+        Category: 'dry', 'rain', 'snow', 'precip', or 'missing'
+    """
+    if pd.isna(ptype) or ptype in ['', 'nan', 'None']:
+        return 'missing'
+    
+    ptype_str = str(ptype).strip()
+    
+    # Direct lookup
+    if ptype_str in PTYPE_MAP:
+        return PTYPE_MAP[ptype_str]
+    
+    # Pattern matching for codes not in map
+    ptype_upper = ptype_str.upper()
+    
+    if ptype_upper == 'NP':
+        return 'dry'
+    if ptype_upper.startswith('R'):
+        return 'rain'
+    if ptype_upper.startswith('S'):
+        return 'snow'
+    if ptype_upper.startswith('P'):
+        return 'precip'
+    if ptype_upper.startswith('M') or ptype_upper.startswith('?'):
+        return 'missing'
+    
+    return 'missing'
+
+
+# =============================================================================
+# CONVERT TO METRIC
+# =============================================================================
+
+def convert_to_metric(df, station_id):
+    """
+    Convert 1-min data to metric units.
+    
+    Conversions:
+    - tmpf/dwpf (°F) → temp/dewpoint (°C)
+    - sknt/gust_sknt (knots) → avg_wind_speed/max_wind_speed (m/s)
+    - precip (inches) → precip_incremental (mm)
+    - ptype → precip_type (raw code) + precip_category (simplified)
+    
+    Output columns match standard format:
+    - time (index), temp, dewpoint, avg_wind_speed, wind_direction, 
+      max_wind_speed, max_wind_direction, precip_type, precip_category, precip_incremental
+    """
+    out = pd.DataFrame()
+    out['time'] = pd.to_datetime(df['valid(UTC)'])
+    
+    # Temperature: °F → °C
     if 'tmpf' in df.columns:
-        standard['temp_c'] = pd.to_numeric(df['tmpf'], errors='coerce')
-        standard['temp_c'] = (standard['temp_c'] - 32) * 5/9
+        out['temp'] = (pd.to_numeric(df['tmpf'], errors='coerce') - 32) * 5/9
     
-    # Dewpoint: F to C
     if 'dwpf' in df.columns:
-        standard['dewpoint_c'] = pd.to_numeric(df['dwpf'], errors='coerce')
-        standard['dewpoint_c'] = (standard['dewpoint_c'] - 32) * 5/9
+        out['dewpoint'] = (pd.to_numeric(df['dwpf'], errors='coerce') - 32) * 5/9
     
-    # Wind: knots to m/s
+    # Wind: knots → m/s
     if 'sknt' in df.columns:
-        standard['wind_speed_ms'] = pd.to_numeric(df['sknt'], errors='coerce') * 0.51444
+        out['avg_wind_speed'] = pd.to_numeric(df['sknt'], errors='coerce') * 0.51444
     
     if 'drct' in df.columns:
-        standard['wind_dir_deg'] = pd.to_numeric(df['drct'], errors='coerce')
+        out['wind_direction'] = pd.to_numeric(df['drct'], errors='coerce')
     
-    # Pressure: inHg to hPa
-    if 'alti' in df.columns:
-        standard['pressure_hpa'] = pd.to_numeric(df['alti'], errors='coerce') * 33.8639
+    # Wind gust: knots → m/s
+    if 'gust_sknt' in df.columns:
+        out['max_wind_speed'] = pd.to_numeric(df['gust_sknt'], errors='coerce') * 0.51444
     
-    # Visibility
-    if 'vsby' in df.columns:
-        standard['visibility_mi'] = pd.to_numeric(df['vsby'], errors='coerce')
+    if 'gust_drct' in df.columns:
+        out['max_wind_direction'] = pd.to_numeric(df['gust_drct'], errors='coerce')
     
-    # Precipitation: inches to mm
-    if 'p01i' in df.columns:
-        precip = df['p01i'].replace('T', '0.001')
-        standard['precip_mm'] = pd.to_numeric(precip, errors='coerce') * 25.4
+    # Precipitation type (raw code + simplified category)
+    if 'ptype' in df.columns:
+        out['precip_type'] = df['ptype'].astype(str).replace('nan', None)
+        out['precip_category'] = out['precip_type'].apply(map_precip_category)
     
-    # Wind gust: knots to m/s
-    if 'gust' in df.columns:
-        standard['wind_gust_ms'] = pd.to_numeric(df['gust'], errors='coerce') * 0.51444
+    # Precipitation: inches → mm
+    if 'precip' in df.columns:
+        out['precip_incremental'] = pd.to_numeric(df['precip'], errors='coerce') * 25.4
     
-    # Humidity
-    if 'relh' in df.columns:
-        standard['humidity_pct'] = pd.to_numeric(df['relh'], errors='coerce')
-    
-    return standard.sort_values('datetime').reset_index(drop=True)
+    return out.sort_values('time').reset_index(drop=True)
 
 
 def process_all_stations(raw_data, verbose=True):
-    """Convert all stations to standard format"""
+    """Convert all stations to metric."""
     if verbose:
-        print("Processing data...\n")
+        print("\nConverting to metric...")
     
-    processed_data = {}
-    for station_id, df_raw in raw_data.items():
-        df_std = convert_to_standard_format(df_raw, station_id)
-        processed_data[station_id] = df_std
-        
+    processed = {}
+    for station_id, df in raw_data.items():
+        processed[station_id] = convert_to_metric(df, station_id)
         if verbose:
-            station_name = STATIONS.get(station_id, {}).get('name', station_id)
-            print(f"{station_id} - {station_name}:")
-            print(f"  Records: {len(df_std):,}")
-            
-            if 'precip_mm' in df_std.columns:
-                precip_valid = df_std['precip_mm'].notna().sum()
-                precip_rain = (df_std['precip_mm'] > 0).sum()
-                print(f"  Precipitation: {precip_valid:,} valid, {precip_rain:,} with rain")
-            print()
+            n = len(processed[station_id])
+            precip_sum = processed[station_id]['precip_incremental'].sum()
+            print(f"  {station_id}: {n:,} rows, total precip = {precip_sum:.1f} mm")
     
     if verbose:
-        print("✓ Processing complete\n")
+        print("✓ Conversion complete\n")
     
-    return processed_data
+    return processed
 
 
-# ============================================================================
-# PRECIPITATION ANALYSIS
-# ============================================================================
+# =============================================================================
+# GENERAL RESAMPLE FUNCTION
+# =============================================================================
 
-def compute_precip_increments(processed_data):
+def resample_data(df, interval='5min'):
     """
-    Compute TRUE 5-minute precipitation increments.
-    
-    ASOS p01i is a running hourly total that resets at ~:51.
-    To get actual rainfall per 5-min interval:
-    - Compute diff between consecutive observations
-    - When diff < 0, it means hourly reset occurred → use the new value as-is
-    
-    Parameters
-    ----------
-    processed_data : dict
-        Dictionary of processed DataFrames {station_id: df}
-        
-    Returns
-    -------
-    dict
-        Same structure with 'precip_mm' replaced by true 5-min increments
-    """
-    result = {}
-    
-    for station_id, df in processed_data.items():
-        df_out = df.copy()
-        df_out['datetime'] = pd.to_datetime(df_out['datetime'])
-        df_out = df_out.sort_values('datetime').reset_index(drop=True)
-        
-        if 'precip_mm' in df_out.columns:
-            # Compute difference between consecutive readings
-            precip_raw = df_out['precip_mm'].fillna(0)
-            precip_diff = precip_raw.diff()
-            
-            # First row: use raw value
-            precip_diff.iloc[0] = precip_raw.iloc[0]
-            
-            # Negative diff = hourly reset occurred → use raw value (new hour's accumulation)
-            reset_mask = precip_diff < 0
-            precip_diff[reset_mask] = precip_raw[reset_mask]
-            
-            df_out['precip_mm'] = precip_diff
-        
-        result[station_id] = df_out
-    
-    return result
-
-
-def compute_accumulated_rainfall(df, start_date=None, end_date=None):
-    """
-    Compute cumulative precipitation from 5-min increment data.
-    
-    This version works with increment data (where precip_mm is per 5-minute interval).
+    Resample data to specified interval.
     
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with datetime and precip_mm columns (increments, not running totals)
-    start_date : datetime, optional
-        Start date for filtering
-    end_date : datetime, optional
-        End date for filtering
-        
+        Input data with 'time' column
+    interval : str
+        Resampling interval (e.g., '5min', '10min', '15min', '30min', '1H')
+    
     Returns
     -------
     pd.DataFrame
-        DataFrame with datetime, precip_mm, and accumulated_mm columns
-    """
-    df_accum = df[['datetime', 'precip_mm']].copy()
-    df_accum['datetime'] = pd.to_datetime(df_accum['datetime'])
+        Resampled data
     
-    # Filter date range
+    Aggregation rules:
+    - precip_incremental: SUM
+    - temp, dewpoint: MEAN
+    - avg_wind_speed, wind_direction: MEAN
+    - max_wind_speed: MAX
+    - max_wind_direction: MEAN
+    - precip_type, precip_category: MODE (most frequent)
+    """
+    df = df.copy()
+    df = df.set_index('time')
+    
+    agg_dict = {
+        'precip_incremental': 'sum',
+        'temp': 'mean',
+        'dewpoint': 'mean',
+        'avg_wind_speed': 'mean',
+        'wind_direction': 'mean',
+        'max_wind_speed': 'max',
+        'max_wind_direction': 'mean',
+    }
+    
+    # Only aggregate columns that exist
+    agg_dict = {k: v for k, v in agg_dict.items() if k in df.columns}
+    
+    df_resampled = df.resample(interval).agg(agg_dict)
+    
+    # Handle categorical columns separately (mode)
+    def get_mode(x):
+        x = x.dropna()
+        if len(x) == 0:
+            return None
+        mode = x.mode()
+        return mode.iloc[0] if len(mode) > 0 else None
+    
+    if 'precip_type' in df.columns:
+        ptype_resampled = df['precip_type'].resample(interval).apply(get_mode)
+        df_resampled['precip_type'] = ptype_resampled
+    
+    if 'precip_category' in df.columns:
+        pcat_resampled = df['precip_category'].resample(interval).apply(get_mode)
+        df_resampled['precip_category'] = pcat_resampled
+    
+    df_resampled = df_resampled.reset_index()
+    
+    return df_resampled
+
+
+def resample_all_stations(processed_data, interval='5min', verbose=True):
+    """
+    Resample all stations to specified interval.
+    
+    Parameters
+    ----------
+    processed_data : dict
+        {station_id: DataFrame}
+    interval : str
+        Resampling interval (e.g., '5min', '10min', '15min', '30min', '1H')
+    verbose : bool
+        Print progress
+    
+    Returns
+    -------
+    dict
+        {station_id: resampled DataFrame}
+    """
+    if verbose:
+        print(f"Resampling to {interval} intervals...")
+    
+    resampled = {}
+    for station_id, df in processed_data.items():
+        df_res = resample_data(df, interval)
+        df_res['station_id'] = station_id
+        resampled[station_id] = df_res
+        if verbose:
+            print(f"  {station_id}: {len(df_res):,} rows")
+    
+    if verbose:
+        print(f"✓ Resampling to {interval} complete\n")
+    
+    return resampled
+
+
+# =============================================================================
+# ACCUMULATED PRECIPITATION
+# =============================================================================
+
+def compute_accumulated(df, start_date=None, end_date=None):
+    """
+    Compute cumulative precipitation.
+    
+    Filters to date range first, then computes cumsum (starts at 0).
+    """
+    df = df.copy()
+    df['time'] = pd.to_datetime(df['time'])
+    
     if start_date:
-        df_accum = df_accum[df_accum['datetime'] >= pd.to_datetime(start_date)]
+        df = df[df['time'] >= pd.to_datetime(start_date)]
     if end_date:
-        df_accum = df_accum[df_accum['datetime'] <= pd.to_datetime(end_date)]
+        df = df[df['time'] <= pd.to_datetime(end_date)]
     
-    df_accum = df_accum.copy()
-    df_accum['precip_mm'] = df_accum['precip_mm'].fillna(0)
-    df_accum['accumulated_mm'] = df_accum['precip_mm'].cumsum()
+    df = df.copy()
+    df['precip_incremental'] = df['precip_incremental'].fillna(0)
+    df['accumulated_mm'] = df['precip_incremental'].cumsum()
     
-    return df_accum.reset_index(drop=True)
+    return df.reset_index(drop=True)
 
 
-def compute_accumulated_rainfall_legacy(df, resolution='5min'):
+def compute_accumulated_all(processed_data, start_date=None, end_date=None):
+    """Compute accumulated for all stations."""
+    accumulated = {}
+    for station_id, df in processed_data.items():
+        accumulated[station_id] = compute_accumulated(df, start_date, end_date)
+    return accumulated
+
+
+# =============================================================================
+# PRECIP TYPE ANALYSIS
+# =============================================================================
+
+def get_precip_type_summary(data_dict, use_category=True, verbose=True):
     """
-    Compute cumulative precipitation (legacy method using :51 minute observations).
+    Summarize precipitation types across all stations.
     
-    For 5-minute data: p01i represents "precipitation in the past hour" and is reported
-    at each 5-minute observation. The same hour's precipitation value repeats multiple times.
-    We use only the :51 minute observations (full hourly reports) to avoid double-counting.
+    Parameters
+    ----------
+    data_dict : dict
+        {station_id: DataFrame}
+    use_category : bool
+        If True, use simplified categories (dry, rain, snow, precip, missing)
+        If False, use raw ptype codes
+    verbose : bool
+        Print summary table
     
-    For hourly data: p01i is already per-hour precipitation, so we can sum directly.
+    Returns
+    -------
+    pd.DataFrame
+        Summary table with counts per station and type
+    """
+    summaries = []
+    
+    # Determine which column to use
+    col = 'precip_category' if use_category else 'precip_type'
+    
+    for station_id, df in data_dict.items():
+        # If precip_category requested but doesn't exist, create it on the fly
+        if col == 'precip_category' and col not in df.columns:
+            if 'precip_type' in df.columns:
+                df = df.copy()
+                df['precip_category'] = df['precip_type'].apply(map_precip_category)
+            else:
+                continue
+        
+        if col not in df.columns:
+            continue
+        
+        # Count types
+        type_counts = df[col].value_counts().to_dict()
+        
+        for ptype, count in type_counts.items():
+            if ptype and ptype != 'None' and ptype != 'nan':
+                summaries.append({
+                    'station_id': station_id,
+                    'type': ptype,
+                    'count': count
+                })
+    
+    if len(summaries) == 0:
+        if verbose:
+            print("No precipitation type data found.")
+        return pd.DataFrame()
+    
+    summary_df = pd.DataFrame(summaries)
+    
+    if verbose:
+        print("\nPrecipitation Type Summary:")
+        print("-" * 50)
+        pivot = summary_df.pivot_table(
+            index='type', 
+            columns='station_id', 
+            values='count', 
+            fill_value=0
+        )
+        # Reorder rows for better display
+        if use_category:
+            order = ['dry', 'rain', 'snow', 'precip', 'missing']
+            order = [o for o in order if o in pivot.index]
+            if order:
+                pivot = pivot.reindex(order)
+        print(pivot.to_string())
+        
+        # Print percentages
+        print("\nPercentages:")
+        print("-" * 50)
+        pct = pivot.div(pivot.sum()) * 100
+        print(pct.round(1).to_string())
+        print()
+    
+    return summary_df
+
+
+def filter_by_precip_type(df, precip_types):
+    """
+    Filter data to specific precipitation types.
     
     Parameters
     ----------
     df : pd.DataFrame
-        DataFrame with datetime and precip_mm columns (running totals from raw data)
-    resolution : str
-        '5min' or 'hourly'
-        
+        Data with 'precip_type' column
+    precip_types : str or list
+        Type(s) to filter for (e.g., 'rain', ['rain', 'snow'])
+    
     Returns
     -------
     pd.DataFrame
-        DataFrame with datetime, precip_mm, and accumulated_mm columns
+        Filtered data
     """
-    df_accum = df[['datetime', 'precip_mm']].copy()
-    df_accum['datetime'] = pd.to_datetime(df_accum['datetime'])
+    if isinstance(precip_types, str):
+        precip_types = [precip_types]
     
-    if resolution == '5min':
-        # Use only :51 minute observations (full hourly reports)
-        # These represent the precipitation that fell in the complete hour ending at :51
-        df_accum['minute'] = df_accum['datetime'].dt.minute
-        df_hourly = df_accum[df_accum['minute'] == 51].copy()
-        df_hourly = df_hourly[['datetime', 'precip_mm']].copy()
-        df_hourly['precip_mm'] = df_hourly['precip_mm'].fillna(0)
-        
-        # Compute cumulative sum (values are per-hour, not cumulative)
-        df_hourly['accumulated_mm'] = df_hourly['precip_mm'].cumsum()
-        
-        return df_hourly[['datetime', 'precip_mm', 'accumulated_mm']]
-    else:
-        # For hourly data, p01i is already per-hour precipitation
-        df_accum = df_accum.set_index('datetime')
-        df_accum['precip_mm'] = df_accum['precip_mm'].fillna(0)
-        df_accum['accumulated_mm'] = df_accum['precip_mm'].cumsum()
-        return df_accum.reset_index()[['datetime', 'precip_mm', 'accumulated_mm']]
+    return df[df['precip_type'].isin(precip_types)].copy()
 
 
-def compute_accumulated_for_all_stations(processed_data, start_date=None, end_date=None, resolution=None):
+# =============================================================================
+# FILE I/O
+# =============================================================================
+
+def save_data(data_dict, output_dir, prefix='', 
+              save_individual=True, save_combined=True, verbose=True):
     """
-    Compute accumulated rainfall for all stations.
+    Save station data to CSV files.
     
     Parameters
     ----------
-    processed_data : dict
-        Dictionary of processed DataFrames {station_id: df}
-        If data has been processed with compute_precip_increments, use start_date/end_date
-        Otherwise, use resolution for legacy method
-    start_date : datetime, optional
-        Start date for filtering (used with increment data)
-    end_date : datetime, optional
-        End date for filtering (used with increment data)
-    resolution : str, optional
-        Resolution for legacy method ('5min' or 'hourly')
-        
+    data_dict : dict
+        {station_id: DataFrame}
+    output_dir : str or Path
+        Output directory path
+    prefix : str
+        Prefix for filenames (e.g., '1min', '5min')
+    save_individual : bool
+        Save individual station files
+    save_combined : bool
+        Save combined all-stations file
+    verbose : bool
+        Print progress and output paths
+    
     Returns
     -------
     dict
-        Dictionary of accumulated rainfall DataFrames {station_id: df}
+        {'individual': [paths], 'combined': path or None}
     """
-    accumulated_data = {}
-    for station_id, df in processed_data.items():
-        if 'precip_mm' in df.columns:
-            if resolution is not None:
-                # Legacy method: use :51 minute observations
-                accumulated_data[station_id] = compute_accumulated_rainfall_legacy(df, resolution=resolution)
-            else:
-                # New method: use increment data
-                accumulated_data[station_id] = compute_accumulated_rainfall(df, start_date, end_date)
-    return accumulated_data
-
-
-# ============================================================================
-# FILE I/O
-# ============================================================================
-
-def save_processed_data(processed_data, output_dir, start_date, end_date, resolution='5min'):
-    """Save processed data to CSV"""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print("\nSaving data...")
+    saved_files = {'individual': [], 'combined': None}
     
-    # Individual files
-    for station_id, df in processed_data.items():
-        filename = f"{station_id}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}_{resolution}.csv"
-        df.to_csv(output_dir / filename, index=False)
-        print(f"  ✓ {filename}")
+    if verbose:
+        print(f"\nSaving to: {output_dir.resolve()}")
+        print("-" * 40)
+    
+    # Individual station files
+    if save_individual:
+        for station_id, df in data_dict.items():
+            fname = f"{station_id}_{prefix}.csv" if prefix else f"{station_id}.csv"
+            fpath = output_dir / fname
+            # Set time as index for output
+            df_out = df.set_index('time') if 'time' in df.columns else df
+            df_out.to_csv(fpath)
+            saved_files['individual'].append(fpath)
+            if verbose:
+                print(f"  ✓ {fname} ({len(df):,} rows)")
     
     # Combined file
-    combined = pd.concat(processed_data.values(), ignore_index=True)
-    combined = combined.sort_values(['station_id', 'datetime']).reset_index(drop=True)
-    combined_filename = f"ALL_STATIONS_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}_{resolution}.csv"
-    combined.to_csv(output_dir / combined_filename, index=False)
-    print(f"  ✓ {combined_filename}")
+    if save_combined:
+        combined = pd.concat(data_dict.values(), ignore_index=True)
+        combined = combined.sort_values(['station_id', 'time']).reset_index(drop=True)
+        fname = f"ALL_STATIONS_{prefix}.csv" if prefix else "ALL_STATIONS.csv"
+        fpath = output_dir / fname
+        combined.to_csv(fpath, index=False)
+        saved_files['combined'] = fpath
+        if verbose:
+            print(f"  ✓ {fname} ({len(combined):,} rows)")
     
-    print(f"\n✓ Saved to: {output_dir}\n")
+    if verbose:
+        print("-" * 40)
+        print(f"✓ Save complete: {output_dir.resolve()}\n")
+    
+    return saved_files
+
+
+def load_data(data_dir, prefix='1min', station_ids=None, verbose=True):
+    """
+    Load station data from CSV files.
+    
+    Parameters
+    ----------
+    data_dir : str or Path
+        Directory containing CSV files
+    prefix : str
+        Filename prefix (e.g., '1min', '5min')
+    station_ids : list, optional
+        List of station IDs to load. If None, loads all found.
+    verbose : bool
+        Print progress
+    
+    Returns
+    -------
+    dict
+        {station_id: DataFrame}
+    """
+    data_dir = Path(data_dir)
+    
+    if verbose:
+        print(f"Loading from: {data_dir}")
+    
+    # Find files matching pattern
+    pattern = f"*_{prefix}.csv" if prefix else "*.csv"
+    files = list(data_dir.glob(pattern))
+    
+    if not files:
+        print(f"  ⚠ No files found matching {pattern}")
+        return {}
+    
+    data_dict = {}
+    for fpath in sorted(files):
+        # Extract station_id from filename (e.g., "JFK_1min.csv" -> "JFK")
+        station_id = fpath.stem.replace(f"_{prefix}", "")
+        
+        if station_ids and station_id not in station_ids:
+            continue
+        
+        df = pd.read_csv(fpath, parse_dates=['time'], index_col='time')
+        df = df.reset_index()  # Make time a column again
+        data_dict[station_id] = df
+        
+        if verbose:
+            print(f"  ✓ {fpath.name} ({len(df):,} rows)")
+    
+    if verbose:
+        print(f"✓ Loaded {len(data_dict)} stations\n")
+    
+    return data_dict
+
+
+# Expected columns for standard format
+STANDARD_COLUMNS = {
+    'required': ['time'],
+    'weather': ['temp', 'dewpoint', 'avg_wind_speed', 'wind_direction', 
+                'max_wind_speed', 'max_wind_direction'],
+    'precip': ['precip_incremental', 'precip_type', 'precip_category'],
+}
+
+
+def check_format(data_dict, verbose=True):
+    """
+    Check if data matches standard format.
+    
+    Parameters
+    ----------
+    data_dict : dict
+        {station_id: DataFrame}
+    verbose : bool
+        Print detailed report
+    
+    Returns
+    -------
+    dict
+        {station_id: {'valid': bool, 'missing': list, 'extra': list, 'issues': list}}
+    """
+    results = {}
+    all_expected = STANDARD_COLUMNS['required'] + STANDARD_COLUMNS['weather'] + STANDARD_COLUMNS['precip']
+    
+    if verbose:
+        print("=" * 60)
+        print("FORMAT CHECK")
+        print("=" * 60)
+    
+    all_valid = True
+    for station_id, df in data_dict.items():
+        cols = set(df.columns)
+        expected = set(all_expected)
+        
+        missing = expected - cols
+        extra = cols - expected
+        issues = []
+        
+        # Check time column
+        if 'time' in cols:
+            if not pd.api.types.is_datetime64_any_dtype(df['time']):
+                issues.append("'time' is not datetime type")
+        
+        # Check for NaN in critical columns
+        for col in ['time', 'precip_incremental']:
+            if col in cols:
+                nan_count = df[col].isna().sum()
+                if nan_count > 0:
+                    nan_pct = nan_count / len(df) * 100
+                    if nan_pct > 50:
+                        issues.append(f"'{col}' has {nan_pct:.1f}% NaN")
+        
+        # Check precip is in mm (reasonable range)
+        if 'precip_incremental' in cols:
+            max_precip = df['precip_incremental'].max()
+            if max_precip > 100:
+                issues.append(f"precip_incremental max={max_precip:.1f}, may not be in mm")
+        
+        # Check temp is in Celsius (reasonable range)
+        if 'temp' in cols:
+            max_temp = df['temp'].max()
+            if max_temp > 60:
+                issues.append(f"temp max={max_temp:.1f}, may not be in °C")
+        
+        valid = len(missing) == 0 and len(issues) == 0
+        all_valid = all_valid and valid
+        
+        results[station_id] = {
+            'valid': valid,
+            'missing': list(missing),
+            'extra': list(extra),
+            'issues': issues
+        }
+        
+        if verbose:
+            status = "✓" if valid else "✗"
+            print(f"\n{station_id}: {status}")
+            print(f"  Rows: {len(df):,}")
+            if 'time' in cols:
+                print(f"  Time range: {df['time'].min()} to {df['time'].max()}")
+            if missing:
+                print(f"  Missing columns: {list(missing)}")
+            if extra:
+                print(f"  Extra columns: {list(extra)}")
+            if issues:
+                print(f"  Issues: {issues}")
+    
+    if verbose:
+        print("\n" + "=" * 60)
+        if all_valid:
+            print("✓ All stations pass format check")
+        else:
+            print("✗ Some stations have format issues")
+        print("=" * 60 + "\n")
+    
+    return results
+
+
+# =============================================================================
+# PLOTTING
+# =============================================================================
+
+def plot_precipitation_subplots(data_dict, start_date=None, end_date=None, 
+                                 figsize=(14, 10), title_prefix='',
+                                 ylim=None, tick_labelsize=None, title_fontsize=12):
+    """
+    Plot precipitation (mm) for each station in subplots.
+    
+    Parameters
+    ----------
+    data_dict : dict
+        {station_id: DataFrame}
+    start_date, end_date : datetime, optional
+        Filter date range
+    figsize : tuple
+        Figure size
+    title_prefix : str
+        Prefix for title
+    ylim : tuple, optional
+        Y-axis limits (min, max). Default: (0, auto)
+    tick_labelsize : int, optional
+        Font size for tick labels
+    title_fontsize : int
+        Font size for titles
+    """
+    import matplotlib.pyplot as plt
+    
+    n_stations = len(data_dict)
+    fig, axes = plt.subplots(n_stations, 1, figsize=figsize, sharex=True)
+    
+    if n_stations == 1:
+        axes = [axes]
+    
+    for ax, (station_id, df) in zip(axes, data_dict.items()):
+        df = df.copy()
+        
+        if start_date:
+            df = df[df['time'] >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df['time'] <= pd.to_datetime(end_date)]
+        
+        cfg = STATIONS.get(station_id, {'color': 'blue', 'name': station_id})
+        
+        ax.plot(df['time'], df['precip_incremental'], 
+                color=cfg['color'], lw=0.5, alpha=0.7)
+        
+        ax.set_ylabel('Precip (mm)')
+        ax.set_title(f"{station_id} ({cfg.get('name', '')})", fontsize=title_fontsize)
+        ax.grid(alpha=0.3)
+        
+        if ylim:
+            ax.set_ylim(ylim)
+        else:
+            ax.set_ylim(bottom=0)
+        
+        if tick_labelsize:
+            ax.tick_params(axis='both', labelsize=tick_labelsize)
+    
+    axes[-1].set_xlabel('Date')
+    
+    if start_date and end_date:
+        date_str = f"{pd.to_datetime(start_date).date()} to {pd.to_datetime(end_date).date()}"
+    else:
+        date_str = ""
+    
+    title = f"{title_prefix} Precipitation" if title_prefix else "Precipitation"
+    if date_str:
+        title += f"\n{date_str}"
+    
+    fig.suptitle(title, fontsize=title_fontsize)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def plot_weather_subplots(data_dict, params=None, start_date=None, end_date=None,
+                          figsize=(14, 12), title_prefix='',
+                          ylims=None, tick_labelsize=None, title_fontsize=12):
+    """
+    Plot multiple weather parameters for all stations.
+    
+    Parameters
+    ----------
+    data_dict : dict
+        {station_id: DataFrame}
+    params : list, optional
+        Parameters to plot. Default: ['precip_incremental', 'temp', 'avg_wind_speed']
+    start_date, end_date : datetime, optional
+        Filter date range
+    figsize : tuple
+        Figure size
+    title_prefix : str
+        Prefix for title
+    ylims : dict, optional
+        Y-axis limits per parameter. E.g., {'precip_incremental': (0, 10), 'temp': (-10, 30)}
+    tick_labelsize : int, optional
+        Font size for tick labels
+    title_fontsize : int
+        Font size for titles
+    """
+    import matplotlib.pyplot as plt
+    
+    if params is None:
+        params = ['precip_incremental', 'temp', 'avg_wind_speed']
+    
+    if ylims is None:
+        ylims = {}
+    
+    param_labels = {
+        'precip_incremental': 'Precipitation (mm)',
+        'temp': 'Temperature (°C)',
+        'dewpoint': 'Dewpoint (°C)',
+        'avg_wind_speed': 'Wind Speed (m/s)',
+        'max_wind_speed': 'Wind Gust (m/s)',
+        'wind_direction': 'Wind Direction (°)',
+        'visibility_km': 'Visibility (km)',
+        'accumulated_mm': 'Accumulated Precip (mm)',
+    }
+    
+    n_params = len(params)
+    fig, axes = plt.subplots(n_params, 1, figsize=figsize, sharex=True)
+    
+    if n_params == 1:
+        axes = [axes]
+    
+    for ax, param in zip(axes, params):
+        for station_id, df in data_dict.items():
+            df = df.copy()
+            
+            if start_date:
+                df = df[df['time'] >= pd.to_datetime(start_date)]
+            if end_date:
+                df = df[df['time'] <= pd.to_datetime(end_date)]
+            
+            if param not in df.columns:
+                continue
+            
+            cfg = STATIONS.get(station_id, {'color': 'blue', 'ls': '-', 'name': station_id})
+            
+            ax.plot(df['time'], df[param], 
+                    label=f"{station_id}",
+                    color=cfg['color'], ls=cfg.get('ls', '-'), 
+                    lw=0.8, alpha=0.7)
+        
+        ax.set_ylabel(param_labels.get(param, param))
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(alpha=0.3)
+        
+        if param in ylims:
+            ax.set_ylim(ylims[param])
+        
+        if tick_labelsize:
+            ax.tick_params(axis='both', labelsize=tick_labelsize)
+    
+    axes[-1].set_xlabel('Date')
+    
+    if start_date and end_date:
+        date_str = f"{pd.to_datetime(start_date).date()} to {pd.to_datetime(end_date).date()}"
+    else:
+        date_str = ""
+    
+    title = f"{title_prefix} Weather Data" if title_prefix else "Weather Data"
+    if date_str:
+        title += f"\n{date_str}"
+    
+    fig.suptitle(title, fontsize=title_fontsize)
+    plt.tight_layout()
+    
+    return fig, axes
+
+
+def plot_accumulated(accumulated_dict, start_date=None, end_date=None,
+                     figsize=(14, 6), ylim=None, tick_labelsize=None, title_fontsize=12):
+    """
+    Plot accumulated precipitation for all stations.
+    
+    Parameters
+    ----------
+    accumulated_dict : dict
+        {station_id: DataFrame} with 'accumulated_mm' column
+    start_date, end_date : datetime, optional
+        For title only
+    figsize : tuple
+        Figure size
+    ylim : tuple, optional
+        Y-axis limits (min, max). Default: (0, auto)
+    tick_labelsize : int, optional
+        Font size for tick labels
+    title_fontsize : int
+        Font size for titles
+    """
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    for station_id, df in accumulated_dict.items():
+        cfg = STATIONS.get(station_id, {'color': 'blue', 'ls': '-', 'name': station_id})
+        
+        ax.plot(df['time'], df['accumulated_mm'], 
+                label=f"{station_id} ({cfg.get('name', '')})",
+                color=cfg['color'], ls=cfg.get('ls', '-'), lw=2)
+        
+        final = df['accumulated_mm'].iloc[-1]
+        ax.annotate(f'{final:.0f} mm', 
+                    xy=(df['time'].iloc[-1], final),
+                    xytext=(5, 0), textcoords='offset points',
+                    fontsize=10, fontweight='bold', color=cfg['color'])
+    
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Accumulated Precipitation (mm)')
+    
+    if start_date and end_date:
+        date_str = f"{pd.to_datetime(start_date).date()} to {pd.to_datetime(end_date).date()}"
+        ax.set_title(f'Cumulative Precipitation\n{date_str}', fontsize=title_fontsize)
+    else:
+        ax.set_title('Cumulative Precipitation', fontsize=title_fontsize)
+    
+    ax.legend(loc='upper left')
+    ax.grid(alpha=0.3)
+    
+    if ylim:
+        ax.set_ylim(ylim)
+    else:
+        ax.set_ylim(bottom=0)
+    
+    if tick_labelsize:
+        ax.tick_params(axis='both', labelsize=tick_labelsize)
+    
+    plt.tight_layout()
+    
+    return fig, ax
+
+
+def plot_precip_by_type(data_dict, start_date=None, end_date=None, figsize=(14, 10),
+                        ylim=None, tick_labelsize=None, title_fontsize=12,
+                        use_category=True):
+    """
+    Plot precipitation with background colored by precip type.
+    
+    Parameters
+    ----------
+    data_dict : dict
+        {station_id: DataFrame}
+    start_date, end_date : datetime, optional
+        Filter date range
+    figsize : tuple
+        Figure size
+    ylim : tuple, optional
+        Y-axis limits (min, max). Default: (0, auto)
+    tick_labelsize : int, optional
+        Font size for tick labels
+    title_fontsize : int
+        Font size for titles
+    use_category : bool
+        If True, use simplified categories. If False, use raw ptype codes.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    
+    # Color map for precip categories
+    category_colors = {
+        'dry': '#f0f0f0',       # very light gray (almost invisible)
+        'rain': '#1f77b4',      # blue
+        'snow': '#00FFFF',      # cyan
+        'precip': '#ff7f0e',    # orange
+        'missing': '#d62728',   # red
+    }
+    
+    # Color map for raw ptype codes (fallback)
+    ptype_colors = {
+        'NP': '#f0f0f0',
+        'R': '#1f77b4', 'R+': '#0d4a6b', 'R-': '#5aa3d0',
+        'S': '#00FFFF', 'S+': '#00CCCC', 'S-': '#66FFFF',
+        'P': '#ff7f0e', 'P?': '#ffb366',
+        'M': '#d62728',
+    }
+    
+    n_stations = len(data_dict)
+    fig, axes = plt.subplots(n_stations, 1, figsize=figsize, sharex=True)
+    
+    if n_stations == 1:
+        axes = [axes]
+    
+    col = 'precip_category' if use_category else 'precip_type'
+    colors = category_colors if use_category else ptype_colors
+    
+    for ax, (station_id, df) in zip(axes, data_dict.items()):
+        df = df.copy()
+        
+        if start_date:
+            df = df[df['time'] >= pd.to_datetime(start_date)]
+        if end_date:
+            df = df[df['time'] <= pd.to_datetime(end_date)]
+        
+        # If precip_category doesn't exist, create it
+        if col == 'precip_category' and col not in df.columns:
+            if 'precip_type' in df.columns:
+                df['precip_category'] = df['precip_type'].apply(map_precip_category)
+            else:
+                ax.plot(df['time'], df['precip_incremental'], lw=0.5, alpha=0.7, color='black')
+                continue
+        
+        if col not in df.columns:
+            ax.plot(df['time'], df['precip_incremental'], lw=0.5, alpha=0.7, color='black')
+        else:
+            # Get y max for axvspan
+            if ylim:
+                ymax = ylim[1]
+            else:
+                ymax = df['precip_incremental'].max() * 1.1 if df['precip_incremental'].max() > 0 else 1
+            
+            # Paint intervals by type (axvspan for each contiguous block)
+            df = df.sort_values('time').reset_index(drop=True)
+            
+            # Find contiguous intervals of each type
+            df['type_change'] = (df[col] != df[col].shift()).cumsum()
+            
+            legend_handles = {}
+            for _, group in df.groupby('type_change'):
+                ptype = group[col].iloc[0]
+                if ptype and ptype != 'None' and ptype != 'nan' and ptype != 'dry':
+                    color = colors.get(ptype, '#333333')
+                    t_start = group['time'].iloc[0]
+                    t_end = group['time'].iloc[-1]
+                    ax.axvspan(t_start, t_end, alpha=0.4, color=color, linewidth=0)
+                    
+                    if ptype not in legend_handles:
+                        legend_handles[ptype] = Patch(facecolor=color, alpha=0.4, label=ptype)
+            
+            # Plot precip line on top
+            ax.plot(df['time'], df['precip_incremental'], lw=0.5, alpha=0.9, color='black')
+            
+            # Add legend
+            if legend_handles:
+                # Order legend: rain, snow, precip, missing
+                order = ['rain', 'snow', 'precip', 'missing']
+                handles = [legend_handles[k] for k in order if k in legend_handles]
+                ax.legend(handles=handles, loc='upper right', fontsize=7)
+        
+        cfg = STATIONS.get(station_id, {'name': station_id})
+        ax.set_ylabel('Precip (mm)')
+        ax.set_title(f"{station_id} ({cfg.get('name', '')})", fontsize=title_fontsize)
+        ax.grid(alpha=0.3)
+        
+        if ylim:
+            ax.set_ylim(ylim)
+        else:
+            ax.set_ylim(bottom=0)
+        
+        if tick_labelsize:
+            ax.tick_params(axis='both', labelsize=tick_labelsize)
+    
+    axes[-1].set_xlabel('Date')
+    
+    if start_date and end_date:
+        date_str = f"{pd.to_datetime(start_date).date()} to {pd.to_datetime(end_date).date()}"
+    else:
+        date_str = ""
+    
+    title = "Precipitation by Type"
+    if date_str:
+        title += f"\n{date_str}"
+    
+    fig.suptitle(title, fontsize=title_fontsize)
+    plt.tight_layout()
+    
+    return fig, axes

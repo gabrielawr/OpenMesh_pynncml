@@ -1,44 +1,38 @@
-# NOAA ASOS API - Airport Weather Data Fetching
+# NOAA ASOS 1-Minute Data Pipeline
 
-Quick example for fetching data from NOAA ASOS stations via Iowa Environmental Mesonet (IEM) API.
+Fetch TRUE per-minute precipitation and weather data from ASOS stations via IEM.
 
 ## 📁 Files
 
-- **`asos_complete_pipeline.ipynb`** - Complete workflow notebook
-- **`asos_functions.py`** - API fetching & processing functions
-- **`asos_plotting.py`** - Visualization functions
+- **`asos_pipeline.ipynb`** - Complete workflow notebook
+- **`asos_functions.py`** - Fetching, processing, and plotting functions
 
-## 🚀 Quick Start
+## 🔄 Change from Previous Version
 
-1. Open `asos_complete_pipeline.ipynb`
-2. Configure dates, resolution, and station codes:
-```python
-   START_DATE = datetime(2024, 1, 1)
-   END_DATE = datetime(2024, 1, 30)
-   DATA_RESOLUTION = '5min'  # or 'hourly'
-   STATION_IDS = ['KJFK', 'KLGA', 'KNYC']
-```
-3. Run the notebook (no API key needed!)
+Previous version used METAR data (`asos.py` endpoint) which reports hourly observations.
 
-## 📊 What You Get
+This version uses the **1-minute ASOS archive** which NCEI (National Centers for Environmental Information) collects directly from ASOS stations via phone twice daily. The raw NCEI format is difficult to work with and mostly undocumented. IEM processes this data and provides a clean, accessible download.
 
-- **Variables:** Temperature, dewpoint, wind, pressure, precipitation, humidity, visibility
-- **Resolution:** 5-minute or hourly
-- **Format:** Clean CSV files with metric units
-- **Stations:** 4000+ US airport stations available
+**Note:** Data is delayed 18-36 hours (not real-time) due to NCEI collection method.
+
+## 📊 Variables
+
+| Variable | Unit | Description |
+|----------|------|-------------|
+| `temp_c` | °C | Temperature |
+| `dewpoint_c` | °C | Dewpoint |
+| `wind_speed_ms` | m/s | Wind speed |
+| `wind_gust_ms` | m/s | Wind gust |
+| `wind_dir_deg` | ° | Wind direction |
+| `visibility_km` | km | Visibility |
+| `precip_type` | - | Precipitation type (rain, snow, etc.) |
+| `precip_mm` | mm | Precipitation |
 
 ## 🌐 Data Source
 
-- **API:** Iowa Environmental Mesonet (IEM)
-- **Manual Download:** https://mesonet.agron.iastate.edu/request/download.phtml
-- **Station List:** https://mesonet.agron.iastate.edu/sites/networks.php?network=ASOS
-
-## 📍 Finding Station Codes
-
-Use any 4-letter airport code (ICAO):
-- JFK Airport → `KJFK`
-- LaGuardia → `KLGA`
-- O'Hare → `KORD`
-- LAX → `KLAX`
+- **Endpoint:** https://mesonet.agron.iastate.edu/cgi-bin/request/asos1min.py
+- **Docs:** https://mesonet.agron.iastate.edu/request/asos/1min.phtml
+- **IEM Processing:** https://github.com/akrherz/iem/blob/main/scripts/ingestors/asos_1minute/parse_ncei_asos1minute.py
+- **Archive:** Available for US ASOS sites back to 2000
 
 Part of the OpenMesh project.
