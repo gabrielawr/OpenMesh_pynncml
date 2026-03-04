@@ -12,6 +12,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.dates import DateFormatter
 from matplotlib.patches import Patch
+import matplotlib.dates as mdates
 from scipy.interpolate import interp1d
 from tqdm import tqdm
 
@@ -128,7 +129,7 @@ def guage_to_linkset(gaugemetapath, gaugespath):
     return ps
 
 
-def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
+def patched_xarray2link_with_gauges(ds, ps, max_distance=5000, change2min_max=False):
     """
     Convert xarray to LinkSet with gauge references
     Skips links with NaN coordinates or no valid RSL data
@@ -195,8 +196,6 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
             if len(gauges) > 0:
                 
                 # Get the union of all gauge time ranges (min to max across all gauges)
-                from scipy.interpolate import interp1d
-                
                 # Collect all gauge time arrays to find the overall min/max
                 all_gauge_times = []
                 for g in gauges:
@@ -212,19 +211,20 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
                     overall_time_min = min(gt.min() for gt in all_gauge_times)
                     overall_time_max = max(gt.max() for gt in all_gauge_times)
                     
-                    # Create a common time array from min to max
+                    # Create a common time array from min to max with consistent 5 min time-step
                     # Use the same time resolution as the link (or you could use a fixed resolution)
-                    link_time_resolution = ds_one.time.to_numpy().astype("datetime64[s]").astype(np.int64)
-                    if len(link_time_resolution) > 1:
-                        # Use the link's time resolution
-                        time_step = link_time_resolution[1] - link_time_resolution[0]
-                    else:
-                        # Default to 5 minutes (300 seconds) if we can't determine
-                        time_step = 300
+                    time_step = 300
+                    num_steps = int((overall_time_max - overall_time_min) // time_step)
+                    time_max = overall_time_min + (num_steps * time_step)
                     
                     # Create common time array from min to max with the determined step
-                    common_time_array = np.arange(overall_time_min, overall_time_max + time_step, time_step, dtype=np.int64)
+                    snapped_start = (overall_time_min // time_step) * time_step
+                    common_time_array = np.arange(snapped_start, overall_time_max + time_step, time_step, dtype=np.int64)
                     
+                    # Clip common_time_array to start no earlier than the link's start time
+                    link_start_time = ds_one.time.to_numpy().astype("datetime64[s]").astype(np.int64).min()
+                    common_time_array = common_time_array[common_time_array >= link_start_time]
+
                     # Interpolate each gauge's data to the common time base
                     aligned_arrays = []
                     for g in gauges:
@@ -291,6 +291,7 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
                 # No gauges found
                 md.num_gauges_used = 0
             
+            
             # Create Link
             link = Link(
                 link_rsl=rsl,
@@ -301,8 +302,15 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
             
             # Add gauge reference to the link
             link.add_reference(gauge_ref=gauge_ref)
-            
-            link_list.append(link)
+
+            if change2min_max and link is not None:
+                rounded_time = (np.round(link.time_array / 900) * 900).astype(np.int64)
+                link.time_array = rounded_time
+                link = link.create_min_max_link(900)
+
+                
+            if link is not None: link_list.append(link)
+
     
     # Summary
     print(f"\n{'='*60}")
@@ -317,131 +325,75 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000):
 
 
 
-def classification_plot(link, window, threshold):
-    # Part 1: run classification
-    swd = pnc.scm.wet_dry.statistics_wet_dry(threshold, window)
-    wd_classification, std_vector = swd(link.attenuation())
+def classification_plot(link, threshold, window, is_minmax=True):
 
-    # Part 2: Compare to gauge data
-    gauge_ref = link.gauge_ref
-    if gauge_ref and len(gauge_ref) > 0:
-        gauge = gauge_ref[0]
-        
-        # Get time arrays as datetime64
-        link_time = link.time().astype("datetime64[s]")
-        gauge_time = gauge.time_array.astype("datetime64[s]")
-        
-        # Find overlapping time period
+    swd = pnc.scm.wet_dry.statistics_wet_dry(threshold, window)  # init classification model
+    wd_classification, std_vector = swd(link.attenuation())  # run classification method
+
+    if is_minmax:
+        #   Gauge data to 15 min resolution
+        ref = gauge_to15(link.gauge_ref[0])['gauge_data']
+        gauge_time = ref.index
+        gauge_data = ref.values
+
+        #   Find overlapping time
+        link_time = link.time_array.astype('datetime64[s]')
         start_time = max(link_time.min(), gauge_time.min())
         end_time = min(link_time.max(), gauge_time.max())
-        
-        print(f"Overlap period: {start_time} to {end_time}")
-        
-        # Extract arrays
-        wd_array = wd_classification.numpy()[0, :-2]
-        std_array = std_vector.numpy()[0, :]
-        
-        # Trim link_time to match array lengths
-        link_time_wd = link_time[:len(wd_array)]
-        link_time_std = link_time[:len(std_array)]
-        
-        # Create masks for overlap period (using datetime comparison, NOT np.isin)
-        link_mask_wd = (link_time_wd >= start_time) & (link_time_wd <= end_time)
-        link_mask_std = (link_time_std >= start_time) & (link_time_std <= end_time)
+
+        link_mask = (link_time >= start_time) & (link_time <= end_time)
         gauge_mask = (gauge_time >= start_time) & (gauge_time <= end_time)
-        
-        # Apply masks
-        wd_filtered = wd_array[link_mask_wd]
-        std_filtered = std_array[link_mask_std]
-        ref_filtered = gauge.data_array[gauge_mask]
-        time_filtered_link_wd = link_time_wd[link_mask_wd]
-        time_filtered_link_std = link_time_std[link_mask_std]
-        time_filtered_gauge = gauge_time[gauge_mask]
-        
-        print(f"Link WD data points: {len(wd_filtered)}")
-        print(f"Gauge data points: {len(ref_filtered)}")
-        
-        # Interpolate detection to gauge timestamps for comparison
-        link_time_numeric = time_filtered_link_wd.astype('int64')
-        gauge_time_numeric = time_filtered_gauge.astype('int64')
-        
-        # Interpolate using nearest neighbor (appropriate for binary classification)
-        interp_func = interp1d(link_time_numeric, wd_filtered, 
-                            kind='nearest', bounds_error=False, fill_value=0)
-        wd_at_gauge_times = interp_func(gauge_time_numeric)
-        
-        print(f"Interpolated detection length: {len(wd_at_gauge_times)}")
-        
-    else:
-        print("No gauge reference for this link!")
-        ref_filtered = None
 
-    # Part 3: Plot results with 4 subplots (all using consistent indices)
-    if ref_filtered is not None and len(ref_filtered) > 0:
-        _, ax = plt.subplots(4, 1, figsize=(14, 12))
+        link_time_trimmed = link_time[:-2]
 
-        # Convert to pandas datetime for plotting
-        time_link_wd_plot = pd.to_datetime(time_filtered_link_wd)
-        time_link_std_plot = pd.to_datetime(time_filtered_link_std)
-        time_gauge_plot = pd.to_datetime(time_filtered_gauge)
-        gauge_indices = np.arange(len(ref_filtered))
+        link_mask = (link_time_trimmed >= start_time) & (link_time_trimmed <= end_time)
+        gauge_mask = (gauge_time >= start_time) & (gauge_time <= end_time)
+
+        wd = wd_classification.numpy()[0, :-2][link_mask]
+        std = std_vector.numpy()[0, :-2][link_mask]
+        ref_trimmed = gauge_data[gauge_mask]
         
-        # Plot 1: Wet/dry classification
-        ax[0].plot(time_link_wd_plot, wd_filtered)
-        ax[0].set_xlabel('Sample Index')
-        ax[0].set_ylabel('Detection (0=Dry, 1=Wet)')
-        ax[0].set_title('Wet/Dry Classification from Link')
+        plot_time = gauge_time[gauge_mask]
+
+        _, ax = plt.subplots(3, 1)
+        ax[0].plot(link_time_trimmed[link_mask], wd)
+        ax[0].set_xlabel('index')
+        ax[0].set_ylabel('Detection')
         ax[0].grid()
 
-        # Plot 2: Standard deviation
-        ax[1].plot(time_link_std_plot, std_filtered)
-        ax[1].set_xlabel('Sample Index')
         ax[1].set_ylabel(r'$\sigma_n$')
-        ax[1].set_title('Standard Deviation of Attenuation')
-        ax[1].grid()
+        ax[1].plot(link_time_trimmed[link_mask], std)
 
-        # Plot 3: Gauge rain rate (clean view) - USING INDICES
-        ax[2].plot(time_gauge_plot, ref_filtered)
-        ax[2].set_xlabel('Sample Index (5-min intervals)')
-        ax[2].set_ylabel(r'Rain Rate [mm/hr]')
-        ax[2].set_title(f'Gauge Rain Rate (Observed): {start_time} to {end_time}')
-        ax[2].grid()
-        ax[2].set_ylim(bottom=0)
+        ax[2].plot(plot_time, ref_trimmed)
+        plot_wet_dry_detection_mark(ax[2], plot_time, wd, np.nan_to_num(ref_trimmed, nan=0.0))
+        ax[2].legend()
+        ax[2].set_xlabel('Time')
+        ax[2].set_ylabel(r'Rain Rate[mm/hr]')
 
-        # Plot 4: Gauge rain rate WITH detection validation marks - SAME INDICES
-        ax[3].plot(time_gauge_plot.astype('datetime64[s]'), ref_filtered)
-        plot_wet_dry_detection_mark(ax[3], time_gauge_plot, wd_at_gauge_times, ref_filtered)
-        ax[3].legend()
-        ax[3].set_xlabel('Sample Index (5-min intervals)')
-        ax[3].set_ylabel(r'Rain Rate [mm/hr]')
-        ax[3].set_title('Gauge Rain Rate with Detection Validation (Green=Correct, Red=Missed, Blue=False Alarm)')
-        ax[3].set_ylim(bottom=0)
-        
+        for a in ax:
+            a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+            a.xaxis.set_major_locator(mdates.DayLocator())
+
+        plt.xticks(rotation=45)
         plt.tight_layout()
         plt.show()
-        
-        # Part 5: Calculate accuracy metrics
-        true_positives = np.sum((wd_at_gauge_times == 1) & (ref_filtered > 0))
-        true_negatives = np.sum((wd_at_gauge_times == 0) & (ref_filtered == 0))
-        false_positives = np.sum((wd_at_gauge_times == 1) & (ref_filtered == 0))
-        false_negatives = np.sum((wd_at_gauge_times == 0) & (ref_filtered > 0))
-        
-        accuracy = (true_positives + true_negatives) / len(ref_filtered)
-        
-        print(f"\n📊 Detection Performance:")
-        print(f"  True Positives (correctly detected rain): {true_positives}")
-        print(f"  True Negatives (correctly detected dry): {true_negatives}")
-        print(f"  False Positives (false alarms): {false_positives}")
-        print(f"  False Negatives (missed rain): {false_negatives}")
-        print(f"  Positive detection: {true_positives/(true_positives+false_negatives)}")
-        print(f"  Negative detection: {true_negatives/(true_negatives+false_positives)}")
-        print(f"  Accuracy: {accuracy:.2%}")
-        
+
+        tp = ((wd == 1) & (ref_trimmed > 0)).sum()
+        fp = ((wd == 1) & (ref_trimmed == 0)).sum()
+        fn = ((wd == 0) & (ref_trimmed > 0)).sum()
+        tn = ((wd == 0) & (ref_trimmed == 0)).sum()
+
+        accuracy = (tp + tn) / len(wd)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+
+        print(f"Accuracy:  {accuracy*100:.1f}%")
+        print(f"Precision: {precision*100:.1f}%")
+        print(f"Recall:    {recall*100:.1f}%")
     else:
-        print("Could not filter data or no gauge available")
+        return
 
-
-def gauge_to15(gauge):
+def gauge_to15(gauge, is_minmax=False):
 
     import math
     
@@ -527,11 +479,23 @@ def rain_detection(link, statistics_wet_dry_threshold, statistics_window_size, p
             'time': pd.to_datetime(time_filtered_gauge)
         }).set_index('time')
         
+        if is_min_max:
+            link_resampled = link_df
+        else:
+            # 1-min resolution, resample to 15-min to match gauge
+            link_resampled = link_df.resample('15min', label='left', closed='left').agg({
+                'prediction': lambda x: 1 if (len(x) > 0 and x.max() == 1) else 0
+            })
+
+        combined = link_resampled.join(gauge_df, how='inner')
+        combined = combined.dropna()
+        
         # Resample link data to 5-minute intervals: if ANY prediction in window is 1, result is 1
         link_resampled = link_df.resample('5min', label='left', closed='left').agg({
             'prediction': lambda x: 1 if (len(x) > 0 and x.max() == 1) else 0
         })
         
+
         # Align the two datasets
         combined = link_resampled.join(gauge_df, how='inner')
         combined = combined.dropna()
@@ -633,6 +597,11 @@ def rain_detection(link, statistics_wet_dry_threshold, statistics_window_size, p
             plt.tight_layout()
             plt.show()
         
+        wd_array, std_array  # print some values around the Jan 28 rain event
+        rain_event_mask = (link_time >= np.datetime64('2024-01-28')) & (link_time <= np.datetime64('2024-01-29'))
+        print("WD classifications during rain event:", wd_array[rain_event_mask])
+        print("Std values during rain event:", std_array[rain_event_mask])
+        
         return {
             'accuracy': float(accuracy),
             'positive_acc': float(true_positives / (true_positives + false_negatives)),
@@ -644,6 +613,9 @@ def rain_detection(link, statistics_wet_dry_threshold, statistics_window_size, p
             'false_positives': int(false_positives),
             'false_negatives': int(false_negatives)
         }
+        
     else:
         print("Could not filter data or no gauge available")
         return None  
+
+    
