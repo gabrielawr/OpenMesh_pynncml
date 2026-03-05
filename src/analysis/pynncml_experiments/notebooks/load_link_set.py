@@ -365,7 +365,7 @@ def classification_plot(link, threshold, window, is_minmax=True):
         ax[1].plot(link_time_trimmed[link_mask], std)
 
         ax[2].plot(plot_time, ref_trimmed)
-        plot_wet_dry_detection_mark(ax[2], plot_time, wd, np.nan_to_num(ref_trimmed, nan=0.0))
+        plot_wet_dry_detection_mark(ax[2], plot_time, wd, np.nan_to_num(ref_trimmed, nan=0.0)) # only first and last are nan
         ax[2].legend()
         ax[2].set_xlabel('Time')
         ax[2].set_ylabel(r'Rain Rate[mm/hr]')
@@ -387,11 +387,67 @@ def classification_plot(link, threshold, window, is_minmax=True):
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
 
-        print(f"Accuracy:  {accuracy*100:.1f}%")
-        print(f"Precision: {precision*100:.1f}%")
-        print(f"Recall:    {recall*100:.1f}%")
+    
     else:
-        return
+        ref_times = pd.to_datetime(link.time_array, unit='s')
+        wd_vals = wd_classification.squeeze()
+        std_vals = std_vector.squeeze()
+        base_times = pd.to_datetime(link.gauge_ref[0].time_array, unit='s')
+
+        buckets_std = {t: [] for t in base_times}
+        buckets_wd = {t: [] for t in base_times}
+
+        for i, r_time in enumerate(ref_times):
+            # Find which baseline time is the absolute closest to this 1-min point
+            diffs = np.abs(base_times - r_time)
+            closest_time = base_times[np.argmin(diffs)]
+            
+            # Drop the value into that bucket
+            buckets_wd[closest_time].append(wd_vals[i])
+            buckets_std[closest_time].append(std_vals[i])
+
+        wd_5min = np.array([int(any(buckets_wd[t])) if buckets_wd[t] else 0 for t in base_times])
+        std_5min = np.array([np.nanmean(buckets_std[t]) if buckets_std[t] else 0.0 for t in base_times])
+
+        ref = link.gauge_ref[0].data_array
+        plot_time = base_times
+
+        _, ax = plt.subplots(3, 1)
+        ax[0].plot(plot_time, wd_5min)
+        ax[0].set_xlabel('index')
+        ax[0].set_ylabel('Detection')
+        ax[0].grid()
+
+        ax[1].set_ylabel(r'$\sigma_n$')
+        ax[1].plot(plot_time, std_5min)
+
+        ax[2].plot(plot_time, ref)
+        plot_wet_dry_detection_mark(ax[2], plot_time, wd_5min, np.nan_to_num(ref, nan=0.0))
+        ax[2].legend()
+        ax[2].set_xlabel('Time')
+        ax[2].set_ylabel(r'Rain Rate[mm/hr]')
+
+        for a in ax:
+            a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+            a.xaxis.set_major_locator(mdates.DayLocator())
+
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.show()
+
+        tp = ((wd_5min == 1) & (ref > 0)).sum()
+        fp = ((wd_5min == 1) & (ref == 0)).sum()
+        fn = ((wd_5min == 0) & (ref > 0)).sum()
+        tn = ((wd_5min == 0) & (ref == 0)).sum()
+    
+        accuracy = (tp + tn) / len(wd_5min)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+
+    print(f"Accuracy:  {accuracy*100:.1f}%")
+    print(f"Precision: {precision*100:.1f}%")
+    print(f"Recall:    {recall*100:.1f}%")
+                
 
 def gauge_to15(gauge, is_minmax=False):
 
