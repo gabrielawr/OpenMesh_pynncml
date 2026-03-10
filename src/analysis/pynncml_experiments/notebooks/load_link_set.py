@@ -129,7 +129,7 @@ def guage_to_linkset(gaugemetapath, gaugespath):
     return ps
 
 
-def patched_xarray2link_with_gauges(ds, ps, max_distance=5000, change2min_max=False):
+def patched_xarray2link_with_gauges(ds, ps, max_distance=5000, change2min_max=False, time_slice=False, start=None, end=None):
     """
     Convert xarray to LinkSet with gauge references
     Skips links with NaN coordinates or no valid RSL data
@@ -138,6 +138,9 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000, change2min_max=Fa
     skipped_coords = 0
     skipped_data = 0
     
+    if time_slice:
+        ds = ds.sel(time=slice(start, end))
+        
     for i in tqdm(range(len(ds.sublink_id)), desc="Processing sublinks"):
         sublink_name = ds.sublink_id.values[i]
         
@@ -674,4 +677,32 @@ def rain_detection(link, statistics_wet_dry_threshold, statistics_window_size, p
         print("Could not filter data or no gauge available")
         return None  
 
+def del_links(link_set, idx_list, is_minmax=False):
+    indexes = [i for i in range(0,len(link_set))]
+    for idx in idx_list:
+        indexes.remove(idx)
     
+    links = [link_set.get_link(j) for j in indexes]
+    return LinkSet(links)
+
+def keep_links(link_set, idx_list, is_minmax=False):
+    links = [link_set.get_link(j) for j in idx_list]
+    return LinkSet(links)
+
+def gaugetime_5to15(link):
+    ref_times = pd.to_datetime(link.gauge_ref[0].time_array, unit='s')
+    ref_vals = link.gauge_ref[0].data_array.flatten()
+    base_times = pd.to_datetime(link.time_array, unit='s')
+
+    buckets = {t: [] for t in base_times}
+
+    for i, r_time in enumerate(ref_times):
+        # Find which baseline time is the absolute closest to this 5-min point
+        diffs = np.abs(base_times - r_time)
+        closest_time = base_times[np.argmin(diffs)]
+        
+        # Drop the value into that bucket
+        buckets[closest_time].append(ref_vals[i])
+
+    ref_15min = np.array([np.nanmean(buckets[t]) if buckets[t] else 0.0 for t in base_times])
+    return ref_15min
