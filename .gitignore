@@ -46,3 +46,8 @@ src/data/
 dataset/links/
 dataset/weather stationsrc/analysis/snow_analysis/
 src/analysis/snow_analysis/
+src/analysis/analysis.py
+src/analysis/config_analysis.py
+src/analysis/load_data.py
+src/analysis/plotting.py
+src/analysis/scatter_plots.py
