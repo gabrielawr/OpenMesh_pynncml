@@ -25,7 +25,7 @@ from config import ASOS_COLUMN_MAP, ASOS_CONVERSIONS, CONVERSIONS, map_precip_ty
 # =============================================================================
 
 def load_raw_data(raw_dir: Path, station_ids: list = None, verbose: bool = True):
-    """Load raw ASOS CSV files."""
+    """Load raw ASOS CSV files. Merges multiple files per station (deduplicates by time)."""
     if verbose:
         print(f"Loading raw data from: {raw_dir}")
     
@@ -37,17 +37,30 @@ def load_raw_data(raw_dir: Path, station_ids: list = None, verbose: bool = True)
         return {}
     
     for fpath in files:
-        # Extract station_id from filename (e.g., "JFK_raw_20230801_20251110.csv" -> "JFK")
         station_id = fpath.stem.split('_raw_')[0]
         
         if station_ids and station_id not in station_ids:
             continue
         
         df = pd.read_csv(fpath)
-        raw_data[station_id] = df
         
         if verbose:
             print(f"  ✓ {fpath.name} ({len(df):,} rows)")
+        
+        if station_id in raw_data:
+            raw_data[station_id] = pd.concat([raw_data[station_id], df], ignore_index=True)
+        else:
+            raw_data[station_id] = df
+    
+    time_col = 'valid(UTC)' if files and 'valid(UTC)' in raw_data.get(list(raw_data.keys())[0] if raw_data else '', pd.DataFrame()).columns else 'valid'
+    for station_id in raw_data:
+        df = raw_data[station_id]
+        if time_col in df.columns:
+            df[time_col] = pd.to_datetime(df[time_col])
+            df = df.drop_duplicates(subset=[time_col]).sort_values(time_col).reset_index(drop=True)
+            raw_data[station_id] = df
+            if verbose:
+                print(f"  → {station_id} merged: {len(df):,} unique rows")
     
     if verbose:
         print(f"✓ Loaded {len(raw_data)} stations\n")
