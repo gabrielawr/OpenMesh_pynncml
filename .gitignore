@@ -45,3 +45,4 @@ __pycache__/
 src/data/
 dataset/links/
 dataset/weather stationsrc/analysis/snow_analysis/
+src/analysis/snow_analysis/
