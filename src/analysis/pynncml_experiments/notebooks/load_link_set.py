@@ -328,7 +328,7 @@ def patched_xarray2link_with_gauges(ds, ps, max_distance=5000, change2min_max=Fa
 
 
 
-def classification_plot(link, threshold, window, is_minmax=True):
+def classification_plot(link, threshold, window, is_minmax=True, plot=True):
 
     swd = pnc.scm.wet_dry.statistics_wet_dry(threshold, window)  # init classification model
     wd_classification, std_vector = swd(link.attenuation())  # run classification method
@@ -358,28 +358,30 @@ def classification_plot(link, threshold, window, is_minmax=True):
         
         plot_time = gauge_time[gauge_mask]
 
-        _, ax = plt.subplots(3, 1)
-        ax[0].plot(link_time_trimmed[link_mask], wd)
-        ax[0].set_xlabel('index')
-        ax[0].set_ylabel('Detection')
-        ax[0].grid()
+        if plot:
 
-        ax[1].set_ylabel(r'$\sigma_n$')
-        ax[1].plot(link_time_trimmed[link_mask], std)
+            _, ax = plt.subplots(3, 1)
+            ax[0].plot(link_time_trimmed[link_mask], wd)
+            ax[0].set_xlabel('index')
+            ax[0].set_ylabel('Detection')
+            ax[0].grid()
 
-        ax[2].plot(plot_time, ref_trimmed)
-        plot_wet_dry_detection_mark(ax[2], plot_time, wd, np.nan_to_num(ref_trimmed, nan=0.0)) # only first and last are nan
-        ax[2].legend()
-        ax[2].set_xlabel('Time')
-        ax[2].set_ylabel(r'Rain Rate[mm/hr]')
+            ax[1].set_ylabel(r'$\sigma_n$')
+            ax[1].plot(link_time_trimmed[link_mask], std)
 
-        for a in ax:
-            a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
-            a.xaxis.set_major_locator(mdates.DayLocator())
+            ax[2].plot(plot_time, ref_trimmed)
+            plot_wet_dry_detection_mark(ax[2], plot_time, wd, np.nan_to_num(ref_trimmed, nan=0.0)) # only first and last are nan
+            ax[2].legend()
+            ax[2].set_xlabel('Time')
+            ax[2].set_ylabel(r'Rain Rate[mm/hr]')
 
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.show()
+            for a in ax:
+                a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                a.xaxis.set_major_locator(mdates.DayLocator())
+
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
 
         tp = ((wd == 1) & (ref_trimmed > 0)).sum()
         fp = ((wd == 1) & (ref_trimmed == 0)).sum()
@@ -415,28 +417,29 @@ def classification_plot(link, threshold, window, is_minmax=True):
         ref = link.gauge_ref[0].data_array
         plot_time = base_times
 
-        _, ax = plt.subplots(3, 1)
-        ax[0].plot(plot_time, wd_5min)
-        ax[0].set_xlabel('index')
-        ax[0].set_ylabel('Detection')
-        ax[0].grid()
+        if plot:
+            _, ax = plt.subplots(3, 1)
+            ax[0].plot(plot_time, wd_5min)
+            ax[0].set_xlabel('index')
+            ax[0].set_ylabel('Detection')
+            ax[0].grid()
 
-        ax[1].set_ylabel(r'$\sigma_n$')
-        ax[1].plot(plot_time, std_5min)
+            ax[1].set_ylabel(r'$\sigma_n$')
+            ax[1].plot(plot_time, std_5min)
 
-        ax[2].plot(plot_time, ref)
-        plot_wet_dry_detection_mark(ax[2], plot_time, wd_5min, np.nan_to_num(ref, nan=0.0))
-        ax[2].legend()
-        ax[2].set_xlabel('Time')
-        ax[2].set_ylabel(r'Rain Rate[mm/hr]')
+            ax[2].plot(plot_time, ref)
+            plot_wet_dry_detection_mark(ax[2], plot_time, wd_5min, np.nan_to_num(ref, nan=0.0))
+            ax[2].legend()
+            ax[2].set_xlabel('Time')
+            ax[2].set_ylabel(r'Rain Rate[mm/hr]')
 
-        for a in ax:
-            a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
-            a.xaxis.set_major_locator(mdates.DayLocator())
+            for a in ax:
+                a.xaxis.set_major_formatter(mdates.DateFormatter('%d-%m'))
+                a.xaxis.set_major_locator(mdates.DayLocator())
 
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.show()
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
 
         tp = ((wd_5min == 1) & (ref > 0)).sum()
         fp = ((wd_5min == 1) & (ref == 0)).sum()
@@ -446,10 +449,13 @@ def classification_plot(link, threshold, window, is_minmax=True):
         accuracy = (tp + tn) / len(wd_5min)
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    
+    stats = {"TPR":tp/(tp+fn), "FPR":fp/(fp+tn)}
 
     print(f"Accuracy:  {accuracy*100:.1f}%")
     print(f"Precision: {precision*100:.1f}%")
     print(f"Recall:    {recall*100:.1f}%")
+    return stats
                 
 
 def gauge_to15(gauge, is_minmax=False):
