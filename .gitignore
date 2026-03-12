@@ -31,11 +31,23 @@ __pycache__/
 # OS
 .DS_Store
 
-# Data outputs (if any)
-*.csv
+# Large data files - ignored everywhere
 *.nc
-!**/dataset/**/*.csv
-!**/dataset/**/*.nc
+*.h5
+*.hdf5
+*.parquet
 
-# Exclude downloaded data files (keep dataset/ folder at root for metadata only)
+# CSVs ignored everywhere except small reference files in dataset/
+*.csv
+!dataset/**/*.csv
+
+# Exclude downloaded/processed data directories
 src/data/
+dataset/links/
+dataset/weather stationsrc/analysis/snow_analysis/
+src/analysis/snow_analysis/
+src/analysis/analysis.py
+src/analysis/config_analysis.py
+src/analysis/load_data.py
+src/analysis/plotting.py
+src/analysis/scatter_plots.py

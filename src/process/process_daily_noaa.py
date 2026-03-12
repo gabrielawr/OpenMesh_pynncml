@@ -6,7 +6,7 @@ Process NOAA daily data to standard format.
 Put this file in src/process/ and run:
     python process_daily_noaa.py
 
-Input:  src/data/noaa_asos/daily/417*.csv
+Input:  src/data/noaa_asos/daily/4*.csv
 Output: src/data/output/noaa_daily/
 """
 
@@ -28,6 +28,7 @@ STATION_KEYWORDS = {
     'KNYC': ['CENTRAL PARK', 'KNYC'],
     'KJFK': ['JFK', 'JOHN F KENNEDY', 'KJFK'],
     'KLGA': ['LAGUARDIA', 'LGA', 'KLGA'],
+    'KEWR': ['NEWARK', 'EWR', 'KEWR'],
 }
 
 # Columns to keep (NOAA names -> standard names)
@@ -68,8 +69,13 @@ def identify_station(row) -> str | None:
     return None
 
 
-def process_noaa_daily(input_dir: Path, output_dir: Path, action='normal', add_timestamp=False):
-    """Process NOAA daily files into per-station CSVs."""
+def process_noaa_daily(input_dir: Path, output_dir: Path, action='normal', add_timestamp=False, files=None):
+    """Process NOAA daily files into per-station CSVs.
+    
+    Args:
+        files: Optional list of specific file paths to process. 
+               If None, all 4*.csv files in input_dir are used.
+    """
     from datetime import datetime
     
     # Check if output exists and handle action
@@ -90,10 +96,11 @@ def process_noaa_daily(input_dir: Path, output_dir: Path, action='normal', add_t
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Find 417*.csv files
-    files = sorted(input_dir.glob('417*.csv'))
+    # Use specific files or find all 4*.csv in input_dir
+    if files is None:
+        files = sorted(input_dir.glob('4*.csv'))
     if not files:
-        print(f"Error: No 417*.csv files found in {input_dir}")
+        print(f"Error: No 4*.csv files found in {input_dir}")
         sys.exit(1)
     
     print(f"Found {len(files)} files: {[f.name for f in files]}")
@@ -186,6 +193,8 @@ if __name__ == "__main__":
     parser.add_argument('--action', choices=['replace', 'add', 'skip'], 
                        default=DEFAULT_PROCESSING_ACTION_IF_EXISTS,
                        help='Action if files exist: replace (overwrite), add (timestamp), or skip')
+    parser.add_argument('--file', nargs='+', type=str,
+                       help='Specific CSV file(s) to process (e.g. --file 4251094.csv)')
     parser.add_argument('input_dir', nargs='?', type=str, help='Input directory (optional)')
     parser.add_argument('output_dir', nargs='?', type=str, help='Output directory (optional)')
     args = parser.parse_args()
@@ -204,6 +213,18 @@ if __name__ == "__main__":
     
     if args.output_dir:
         output_dir = Path(args.output_dir)
+    
+    # Resolve specific files if --file was used
+    specific_files = None
+    if args.file:
+        specific_files = []
+        for f in args.file:
+            fp = Path(f) if Path(f).is_absolute() else input_dir / f
+            if not fp.exists():
+                print(f"Error: File not found: {fp}")
+                sys.exit(1)
+            specific_files.append(fp)
+        specific_files.sort()
     
     # Check for existing files when running directly (not from notebook)
     if output_dir.exists():
@@ -235,4 +256,4 @@ if __name__ == "__main__":
         print(f"Action: Overwriting existing files")
     print()
     
-    process_noaa_daily(input_dir, output_dir, action=args.action, add_timestamp=False)
+    process_noaa_daily(input_dir, output_dir, action=args.action, add_timestamp=False, files=specific_files)
