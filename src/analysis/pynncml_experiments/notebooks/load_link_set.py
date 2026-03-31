@@ -347,16 +347,16 @@ def classification_plot(link, threshold, window, is_minmax=True, plot=True):
         link_mask = (link_time >= start_time) & (link_time <= end_time)
         gauge_mask = (gauge_time >= start_time) & (gauge_time <= end_time)
 
-        link_time_trimmed = link_time[:-2]
+        # link_time_trimmed = link_time[:-2]
+        link_time_trimmed = link_time
 
         link_mask = (link_time_trimmed >= start_time) & (link_time_trimmed <= end_time)
         gauge_mask = (gauge_time >= start_time) & (gauge_time <= end_time)
 
-        wd = wd_classification.numpy()[0, :-2][link_mask]
-        std = std_vector.numpy()[0, :-2][link_mask]
+        wd = wd_classification.numpy()[0, :][link_mask]
+        std = std_vector.numpy()[0, :][link_mask]
         ref_trimmed = gauge_data[gauge_mask]
-        
-        plot_time = gauge_time[gauge_mask]
+        plot_time = link_time_trimmed[link_mask]
 
         if plot:
 
@@ -450,7 +450,10 @@ def classification_plot(link, threshold, window, is_minmax=True, plot=True):
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     
-    stats = {"TPR":tp/(tp+fn), "FPR":fp/(fp+tn)}
+    stats = {
+        "TPR": tp / (tp + fn) if (tp + fn) > 0 else 0,
+        "FPR": fp / (fp + tn) if (fp + tn) > 0 else 0
+    }
 
     print(f"Accuracy:  {accuracy*100:.1f}%")
     print(f"Precision: {precision*100:.1f}%")
@@ -696,6 +699,7 @@ def keep_links(link_set, idx_list, is_minmax=False):
     return LinkSet(links)
 
 def gaugetime_5to15(link):
+
     ref_times = pd.to_datetime(link.gauge_ref[0].time_array, unit='s')
     ref_vals = link.gauge_ref[0].data_array.flatten()
     base_times = pd.to_datetime(link.time_array, unit='s')
@@ -712,3 +716,57 @@ def gaugetime_5to15(link):
 
     ref_15min = np.array([np.nanmean(buckets[t]) if buckets[t] else 0.0 for t in base_times])
     return ref_15min
+
+def roc_threshold(link, window, is_minmax, step, plot=True):
+    # Array of thresholds
+    thresholds = np.arange(0, 1.01, step)
+
+    # Get TPR and FPR for every threshold
+    TPRs = [classification_plot(link, t, window, is_minmax=True, plot=False)['TPR'] for t in thresholds]
+    FPRs = [classification_plot(link, t, window, is_minmax=True, plot=False)['FPR'] for t in thresholds]
+
+    if plot: # will plot ROC curve
+
+        plt.figure(figsize=(8, 6))
+
+        # Plot the ROC Curve
+        plt.plot(FPRs, TPRs, color='blue', lw=2, label=f'ROC Curve ({link.meta_data.cml_id}, {link.meta_data.sublink_id} Std)')
+
+        # Plot the "Random Guess" line
+        plt.plot([0, 1], [0, 1], color='gray', linestyle='--', label='Random Chance')
+
+        plt.xlim([0.0, 1.0])
+        plt.ylim([0.0, 1.05])
+        plt.xlabel('False Positive Rate (FPR)')
+        plt.ylabel('True Positive Rate (TPR)')
+        plt.title('ROC Curve for Rain Detection')
+        plt.legend(loc="lower right")
+        plt.grid(alpha=0.3)
+        plt.show()
+
+    fpr_arr = np.array(FPRs)
+    tpr_arr = np.array(TPRs)
+    thresh_arr = np.array(thresholds)
+
+    # Calculate distance to the "Perfect" point (0, 1)
+    # Distance = sqrt( FPR^2 + (1-TPR)^2 )
+    distances = np.sqrt(fpr_arr**2 + (1 - tpr_arr)**2)
+
+    # Find candidates with TPR >= 0.8
+    high_tpr_mask = tpr_arr >= 0.8
+
+    if np.any(high_tpr_mask):
+        # Use minimum distance among high-TPR candidates
+        masked_distances = np.where(high_tpr_mask, distances, np.nan)
+        best_idx = np.nanargmin(masked_distances)
+    else:
+        # Fall back: first index where TPR >= 0.85
+        tpr_85_mask = tpr_arr >= 0.80
+        if np.any(tpr_85_mask):
+            best_idx = np.argmax(tpr_85_mask)  # argmax returns first True index
+        else:
+            best_idx = np.nanargmin(distances)  # last resort fallback
+
+    bestT = {"Best Threshold": float(thresh_arr[best_idx]), "Resulting TPR": float(tpr_arr[best_idx]), "Resulting FPR": float(fpr_arr[best_idx])}
+
+    return bestT
