@@ -43,8 +43,7 @@ __pycache__/
 
 # Exclude downloaded/processed data directories
 src/data/
-dataset/links/*
-!dataset/links/ds_openmesh.nc
+dataset/links/
 dataset/weather stationsrc/analysis/snow_analysis/
 src/analysis/snow_analysis/
 src/analysis/analysis.py
